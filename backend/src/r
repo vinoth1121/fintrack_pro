@@ -1,0 +1,71 @@
+const { Router } = require('express');
+const pool = require('../db/pool');
+const authenticate = require('../middleware/auth');
+
+const router = Router();
+router.use(authenticate);
+
+router.get('/', async (req, res, next) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const offset = (page - 1) * limit;
+    const { startDate, endDate, type, categoryId, sort } = req.query;
+    const orderDir = sort === 'oldest' ? 'ASC' : 'DESC';
+
+    let whereExpense = 'e.user_id = $1';
+    let whereIncome = 'i.user_id = $1';
+    if (startDate) { whereExpense += ` AND e.date >= '${startDate}'`; whereIncome += ` AND i.date >= '${startDate}'`; }
+    if (endDate) { whereExpense += ` AND e.date <= '${endDate}'`; whereIncome += ` AND i.date <= '${endDate}'`; }
+    if (categoryId) { whereExpense += ` AND e.category_id = '${categoryId}'`; }
+
+    let expenseCount = 0, incomeCount = 0;
+    if (!type || type === 'expense') {
+      const ce = await pool.query(`SELECT COUNT(*) FROM expenses e WHERE ${whereExpense}`, [req.userId]);
+      expenseCount = parseInt(ce.rows[0].count, 10);
+    }
+    if (!type || type === 'income') {
+      const ci = await pool.query(`SELECT COUNT(*) FROM income i WHERE ${whereIncome}`, [req.userId]);
+      incomeCount = parseInt(ci.rows[0].count, 10);
+    }
+    const total = expenseCount + incomeCount;
+    const totalPages = Math.ceil(total / limit);
+
+    const result = await pool.query(
+      `SELECT * FROM (
+        SELECT e.id, 'expense' AS type, e.title, e.amount, e.currency, e.date,
+               e.category_id, c.name AS cat_name, c.icon AS cat_icon, c.color AS cat_color,
+               e.note, e.payment_method, e.location, e.tags, e.created_at
+        FROM expenses e LEFT JOIN categories c ON e.category_id = c.id
+        WHERE ${whereExpense}
+        UNION ALL
+        SELECT i.id, 'income' AS type, i.title, i.amount, i.currency, i.date,
+               i.category_id, c.name AS cat_name, c.icon AS cat_icon, c.color AS cat_color,
+               i.note, NULL AS payment_method, NULL AS location, ARRAY[]::text[] AS tags, i.created_at
+        FROM income i LEFT JOIN categories c ON i.category_id = c.id
+        WHERE ${whereIncome}
+      ) combined
+      ORDER BY combined.date ${orderDir}, combined.created_at ${orderDir}
+      LIMIT $2 OFFSET $3`,
+      [req.userId, limit, offset],
+    );
+
+    const items = result.rows.map(r => {
+      const tags = r.tags || [];
+      return {
+        id: r.id, type: r.type, title: r.title,
+        amount: parseFloat(r.amount), currency: r.currency || 'INR',
+        date: r.date?.toISOString?.() ?? r.date,
+        category: r.cat_name ? { id: r.category_id, name: r.cat_name, icon: r.cat_icon, color: r.cat_color } : null,
+        categoryId: r.category_id, note: r.note,
+        paymentMethod: r.payment_method, location: r.location,
+        tags: Array.isArray(tags) ? tags : [],
+        createdAt: r.created_at?.toISOString?.() ?? r.created_at,
+      };
+    });
+
+    res.json({ items, pagination: { page, totalPages, total } });
+  } catch (err) { next(err); }
+});
+
+module.exports = router;

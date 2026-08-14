@@ -1,0 +1,123 @@
+# =============================================================================
+# FinTrack Pro — .gitignore
+# Covers: Flutter / Dart, Node.js / Express backend, macOS / Windows / IDE noise
+# =============================================================================
+
+# ---- Flutter / Dart ---------------------------------------------------------
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/coverage/
+**/doc/api/
+
+# Flutter build artifacts
+/build/
+/android/app/debug/
+/android/app/profile/
+/android/app/release/
+
+# Symbolication & obfuscation
+app.*.symbols
+app.*.map.json
+
+# iOS
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/ephemeral/
+**/ios/**/Pods/
+**/ios/**/.symlinks/
+**/ios/**/Flutter/Flutter.framework/
+**/ios/.generated/
+
+# Android
+**/android/.gradle/
+**/android/**/build/
+**/android/local.properties
+**/android/key.properties
+**/android/**/*.keystore
+**/android/**/*.jks
+*.jks
+
+# ---- Node.js / Express backend ---------------------------------------------
+backend/node_modules/
+node_modules/
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/pnpm-debug.log*
+
+# Environment variables & secrets  ⚠️ NEVER COMMIT THESE
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Logs
+*.log
+backend/*.log
+backend/backend.err.log
+backend/backend.out.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.flutter_log
+
+# Runtime data / caches
+.cache/
+tmp/
+backend/tmp_*.js
+
+# Local debug / ad-hoc test scripts (contain hardcoded tokens & test credentials)
+backend/debug_post.js
+backend/debug_test.js
+backend/test_ai.js
+backend/test_api.js
+backend/check_schema.js
+backend/src/db/fix_schema.js
+*.pid
+*.seed
+.DS_Store
+Thumbs.db
+
+# ---- IDE / Editor -----------------------------------------------------------
+# IntelliJ / Android Studio
+*.iml
+*.ipr
+*.iws
+.idea/
+# VS Code (keep useful settings out of VCS)
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# ---- OS ---------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# ---- Misc -------------------------------------------------------------------
+*.class
+*.pyc
+*.swp
+*~
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
