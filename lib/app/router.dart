@@ -32,13 +32,17 @@ import '../features/settings/settings_screen.dart';
 import '../core/widgets/nav_scaffold.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
-  final booted = ref.watch(fintrackProvider.select((s) => s.booted));
-  final onboardingDone = ref.watch(fintrackProvider.select((s) => s.onboardingDone));
-  final authStatus = ref.watch(authStatusProvider);
-
-  return GoRouter(
+  // IMPORTANT: the GoRouter is created ONCE and kept stable. Watching boot/
+  // auth state here would recreate the router on every change, which remounts
+  // the active screen (e.g. the splash) and resets its initState navigation
+  // timer — making the splash flicker or appear skipped. Instead we read
+  // current state inside `redirect` and call `router.refresh()` when it changes.
+  final router = GoRouter(
     initialLocation: '/splash',
     redirect: (context, state) {
+      final booted = ref.read(fintrackProvider.select((s) => s.booted));
+      final onboardingDone = ref.read(fintrackProvider.select((s) => s.onboardingDone));
+      final authStatus = ref.read(authStatusProvider);
       final loc = state.matchedLocation;
       final isAuthRoute = loc == '/login' || loc == '/register' ||
           loc == '/otp' || loc == '/forgot-password' || loc == '/reset-password';
@@ -107,6 +111,14 @@ final routerProvider = Provider<GoRouter>((ref) {
         ],
       ),
     ],
-    errorBuilder: (c, s) => Scaffold(body: Center(child: Text('Route not found: ${s.matchedLocation}'))),
-  );
-});
+      errorBuilder: (c, s) => Scaffold(body: Center(child: Text('Route not found: ${s.matchedLocation}'))),
+    );
+
+    // Re-evaluate the redirect when boot/auth state changes, WITHOUT recreating
+    // the router (which would remount the current screen and reset its timer).
+    ref.listen(fintrackProvider.select((s) => s.booted), (_, __) => router.refresh());
+    ref.listen(fintrackProvider.select((s) => s.onboardingDone), (_, __) => router.refresh());
+    ref.listen(authStatusProvider, (_, __) => router.refresh());
+
+    return router;
+  });

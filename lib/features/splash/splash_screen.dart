@@ -10,7 +10,11 @@ import '../../providers/auth_provider.dart';
 
 /// Splash screen — animated brand logo, gradient wordmark, tagline, loading dots.
 /// After ~1.9s it sets `booted=true` and routes to onboarding (or dashboard if
-/// onboarding was already completed).
+/// onboarding was already completed). Navigation is guarded by [_splashNavigated]
+/// so it fires exactly once even if this widget is remounted (the GoRouter is
+/// recreated whenever boot/auth state changes during startup).
+bool _splashNavigated = false;
+
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 
@@ -22,15 +26,18 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   @override
   void initState() {
     super.initState();
+    debugPrint('[Splash] mounted');
     Future.delayed(const Duration(milliseconds: 1900), () {
       if (!mounted) return;
       ref.read(fintrackProvider.notifier).setBooted(true);
       // Auth status is resolved by AuthNotifier; router redirect handles routing.
       // Brief delay lets the auth provider restore the session.
       Future.delayed(const Duration(milliseconds: 600), () {
-        if (!mounted) return;
+        if (!mounted || _splashNavigated) return;
+        _splashNavigated = true;
         final authStatus = ref.read(authStatusProvider);
         final onboardingDone = ref.read(fintrackProvider.select((s) => s.onboardingDone));
+        debugPrint('[Splash] navigating (authStatus=$authStatus, onboardingDone=$onboardingDone)');
         if (authStatus == AuthStatus.authenticated) {
           // Cold restart with an existing session: pull the latest server
           // state instead of trusting the local SharedPreferences cache.
