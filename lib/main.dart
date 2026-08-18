@@ -7,6 +7,11 @@ import 'core/services/notification_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ServerConfig.applyStoredOverride();
-  await NotificationService.instance.init();
+  try {
+    await NotificationService.instance.init();
+  } catch (e) {
+    // Non-fatal: the app must still launch even if OS notifications are unavailable.
+    debugPrint('[main] NotificationService.init failed (non-fatal): $e');
+  }
   runApp(const ProviderScope(child: FinTrackApp()));
 }
