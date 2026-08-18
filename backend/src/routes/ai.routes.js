@@ -103,6 +103,98 @@ async function callAI({ systemPrompt, userMessage, temperature = 0.7, maxTokens 
   }
 }
 
+// ── Server-side context builder (internal PostgreSQL data only) ───────────────
+// Pulls the user's REAL data straight from PostgreSQL so the model can never be
+// fed (or tricked into using) externally-supplied numbers. This is the single
+// source of truth for the "INTERNAL FINTRACK PRO DATA" block in the prompt.
+async function buildUserContext(userId) {
+  const ctx = { transactions: [], budgets: [], goals: [], currency: 'INR' };
+  try {
+    const recent = await pool.query(
+      `SELECT t.type, t.amount, t.currency, t.description, t.notes, c.name AS category
+       FROM transactions_view t
+       LEFT JOIN categories c ON c.id = t.category_id
+       WHERE t.user_id = $1
+       ORDER BY t.date DESC
+       LIMIT 15`,
+      [userId],
+    );
+    ctx.transactions = recent.rows.map((r) => ({
+      type: r.type,
+      amount: Number(r.amount),
+      currency: r.currency,
+      category: r.category || 'Other',
+      merchant: r.description,
+      note: r.notes,
+    }));
+
+    const budgets = await pool.query(
+      `SELECT b.amount AS "limit", COALESCE(b.spent,0) AS spent, c.name AS category
+       FROM budgets b LEFT JOIN categories c ON c.id = b.category_id
+       WHERE b.user_id = $1 AND b.is_active = true`,
+      [userId],
+    );
+    ctx.budgets = budgets.rows.map((r) => ({
+      category: r.category || 'General',
+      limit: Number(r.limit),
+      spent: Number(r.spent),
+    }));
+
+    const goals = await pool.query(
+      `SELECT name, target_amount AS target, saved_amount AS saved FROM savings_goals WHERE user_id = $1`,
+      [userId],
+    );
+    ctx.goals = goals.rows.map((r) => ({ name: r.name, target: Number(r.target), saved: Number(r.saved) }));
+
+    const bal = await pool.query(
+      `SELECT COALESCE(SUM(balance),0) AS total FROM accounts WHERE user_id = $1 AND is_active = true`,
+      [userId],
+    );
+    ctx.totalBalance = Number(bal.rows[0]?.total || 0);
+
+    const agg = await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN type='income' THEN amount END),0) AS income,
+         COALESCE(SUM(CASE WHEN type='expense' THEN amount END),0) AS expense
+       FROM transactions_view WHERE user_id = $1 AND date >= date_trunc('month', NOW())`,
+      [userId],
+    );
+    ctx.monthlyIncome = Number(agg.rows[0]?.income || 0);
+    ctx.monthlyExpense = Number(agg.rows[0]?.expense || 0);
+
+    const cur = await pool.query(`SELECT currency FROM users WHERE id = $1`, [userId]);
+    ctx.currency = cur.rows[0]?.currency || 'INR';
+  } catch (e) {
+    console.warn('buildUserContext failed, proceeding with empty DB context:', e.message);
+  }
+  return ctx;
+}
+
+function contextToText(ctx) {
+  if (!ctx) return '';
+  let s = 'INTERNAL FINTRACK PRO DATA (do not use anything outside this block):\n';
+  if (ctx.transactions?.length) {
+    s += 'Recent transactions:\n' + ctx.transactions
+      .map((t) => `  ${t.type}: ${t.currency || '₹'}${t.amount} (${t.category}, ${t.merchant || 'n/a'})`)
+      .join('\n') + '\n';
+  }
+  if (ctx.budgets?.length) {
+    s += 'Budgets:\n' + ctx.budgets
+      .map((b) => `  ${b.category}: ${b.currency || '₹'}${b.spent}/${b.currency || '₹'}${b.limit}`)
+      .join('\n') + '\n';
+  }
+  if (ctx.goals?.length) {
+    s += 'Savings Goals:\n' + ctx.goals
+      .map((g) => `  ${g.name}: ${g.currency || '₹'}${g.saved}/${g.currency || '₹'}${g.target}`)
+      .join('\n') + '\n';
+  }
+  if (ctx.currency) s += `Currency: ${ctx.currency}\n`;
+  if (ctx.totalBalance !== undefined) s += `Total balance: ${ctx.currency || '₹'}${ctx.totalBalance}\n`;
+  if (ctx.monthlyIncome !== undefined) s += `Monthly income: ${ctx.currency || '₹'}${ctx.monthlyIncome}\n`;
+  if (ctx.monthlyExpense !== undefined) s += `Monthly expenses: ${ctx.currency || '₹'}${ctx.monthlyExpense}\n`;
+  return s;
+}
+
 // ── AI helper: returns baseUrl, enabled, apiKey ───────────────────────────────
 function aiConfig() {
   const enabled = process.env.AI_ENABLED === 'true' || process.env.AI_ENABLED === '1';
@@ -128,38 +220,36 @@ function generateMockReply(userMessage) {
   return `Thank you for your message. I'm analyzing your financial data to provide personalized insights. In the meantime, here are some tips:\n\n- Review your weekly spending to identify patterns\n- Set up automatic savings transfers\n- Track your subscriptions to avoid unused charges\n\nIs there something specific about your finances you'd like to explore?`;
 }
 
+// ── Closed-loop outbound guardrail ──────────────────────────────────────────
+// Defense-in-depth: even though the model has no tools/web access and is
+// instructed to stay internal-only, we scrub the reply for tell-tale signs of
+// external/real-world leakage before it ever reaches the client. This is a
+// safety net, NOT the primary control (that is the prompt + no-tools call).
+const _URL_RE = /https?:\/\/\S+|www\.\S+/gi;
+const _TICKER_RE = /\$[A-Z]{1,5}\b/g;
+const _EXT_PHRASE_RE = /\b(as of (today|now|currently)|according to (the web|google|recent|today's|current events)|live (price|rate|news)|real[-\s]?time (market|web|news))\b/gi;
+
+function enforceClosedLoop(text) {
+  if (typeof text !== 'string' || text.length === 0) return text;
+  let out = text.replace(_URL_RE, '[link removed]');
+  out = out.replace(_TICKER_RE, '[symbol removed]');
+  out = out.replace(_EXT_PHRASE_RE, '[external reference removed]');
+  return out;
+}
+
 // ── POST /ai/chat ─────────────────────────────────────────────────────────────
 router.post('/chat', async (req, res, next) => {
   try {
-    const { message, conversationId, context } = req.body;
+    const { message, conversationId } = req.body;
     const userMessage = typeof message === 'string' ? message.trim() : '';
 
     if (!userMessage) return res.status(400).json({ ok: false, error: 'message is required' });
 
-    // Build contextual system prompt from app data if provided
-    let contextStr = '';
-    if (context) {
-      contextStr = `Financial context (from the user's account):\n\n`;
-      if (context.transactions && context.transactions.length > 0) {
-        contextStr += `Recent transactions: ${context.transactions.map(t =>
-          `${t.type}: ₹${t.amount} (${t.category}, ${t.merchant || 'n/a'})`
-        ).join('\n')}\n`;
-      }
-      if (context.budgets && context.budgets.length > 0) {
-        contextStr += `Budgets: ${context.budgets.map(b =>
-          `${b.category}: ₹${b.spent || 0}/₹${b.limit}`
-        ).join('\n')}\n`;
-      }
-      if (context.goals && context.goals.length > 0) {
-        contextStr += `Savings Goals: ${context.goals.map(g =>
-          `${g.name}: ₹${g.saved}/₹${g.target}`
-        ).join('\n')}\n`;
-      }
-      if (context.currency) contextStr += `Currency: ${context.currency}\n`;
-      if (context.totalBalance !== undefined) contextStr += `Total balance: ₹${context.totalBalance}\n`;
-      if (context.monthlyIncome !== undefined) contextStr += `Monthly income: ₹${context.monthlyIncome}\n`;
-      if (context.monthlyExpense !== undefined) contextStr += `Monthly expenses: ₹${context.monthlyExpense}\n`;
-    }
+    // Build contextual system prompt from the user's REAL data in PostgreSQL.
+    // We intentionally ignore any client-supplied `context` to guarantee the
+    // model only ever sees verified internal data (no external/forged values).
+    const dbContext = await buildUserContext(req.userId);
+    const contextStr = contextToText(dbContext);
 
     // Store conversation in DB
     let convId = conversationId;
@@ -176,7 +266,7 @@ router.post('/chat', async (req, res, next) => {
       userMessage: contextStr ? `${contextStr}\n\nUser question: ${userMessage}` : userMessage,
     });
 
-    const finalReply = reply || generateMockReply(userMessage);
+    const finalReply = enforceClosedLoop(reply || generateMockReply(userMessage));
 
     // Save messages
     await pool.query(
