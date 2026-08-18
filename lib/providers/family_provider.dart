@@ -1,15 +1,12 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../core/network/dio_client.dart';
-import '../data/models/models.dart';
 import '../data/repositories/fintrack_repository.dart';
-import 'fintrack_provider.dart';
 
 // ─── Models ─────────────────────────────────────────────────────────────────
 
 class FamilyMember {
   final String id;
+  final String memberId;
   final String name;
   final String email;
   final String role;
@@ -20,6 +17,7 @@ class FamilyMember {
 
   const FamilyMember({
     required this.id,
+    this.memberId = '',
     required this.name,
     required this.email,
     required this.role,
@@ -39,6 +37,18 @@ class FamilyMember {
       spend: (j['spend'] as num?)?.toDouble() ?? 0,
       budget: (j['budget'] as num?)?.toDouble() ?? 0,
       isYou: isYou,
+    );
+  }
+
+  /// Build from the backend DTO (joined with the `users` table).
+  factory FamilyMember.fromDto(FamilyMemberDto dto) {
+    return FamilyMember(
+      id: dto.id,
+      memberId: dto.memberId,
+      name: dto.name,
+      email: dto.email,
+      role: dto.role,
+      color: '#6C5CE7',
     );
   }
 }
@@ -101,78 +111,18 @@ final familyProvider = StateNotifierProvider<FamilyNotifier, FamilyState>((ref) 
 });
 
 class FamilyNotifier extends StateNotifier<FamilyState> {
-  FinTrackRepository? _repo;
-
   FamilyNotifier() : super(const FamilyState()) {
-    _init();
-  }
-
-  Future<void> _init() async {
-    try {
-      _repo = FinTrackRepository(dioClient);
-    } catch (_) {}
+    fetchFamilyData();
   }
 
   Future<void> fetchFamilyData() async {
-    if (_repo == null) {
-      _repo = FinTrackRepository(dioClient);
-    }
     state = state.copyWith(loading: true, error: null);
     try {
-      final resp = await _repo!.getFamilyOverview();
-      if (resp['ok'] == true) {
-        final membersRaw = resp['members'] as List<dynamic>? ?? [];
-        final profileEmail = _getProfileEmail();
-        final members = membersRaw.map((m) {
-          final member = FamilyMember.fromJson(m as Map<String, dynamic>);
-          final isYou = member.email.isNotEmpty && member.email == profileEmail;
-          return FamilyMember(
-            id: member.id,
-            name: isYou ? _getProfileName() : member.name,
-            email: member.email,
-            role: isYou ? 'admin' : member.role,
-            color: isYou ? _getProfileColor() : member.color,
-            spend: member.spend,
-            budget: member.budget,
-            isYou: isYou,
-          );
-        }).toList();
-
-        // Parse shared transactions as shared budgets
-        final sharedTx = resp['sharedTransactions'] as List<dynamic>? ?? [];
-        final catSpend = <String, double>{};
-        final catNames = <String, String>{};
-        final catColors = <String, String>{};
-        for (final tx in sharedTx) {
-          final t = tx as Map<String, dynamic>;
-          final catId = (t['category_id'] ?? t['categoryId'] ?? '').toString();
-          final name = (t['category_name'] ?? t['categoryName'] ?? 'Shared').toString();
-          final color = (t['color'] ?? '#00E676').toString();
-          final amount = (t['amount'] as num?)?.toDouble() ?? 0;
-          catSpend[catId] = (catSpend[catId] ?? 0) + amount;
-          catNames[catId] = name;
-          catColors[catId] = color;
-        }
-        final sharedBudgets = catSpend.entries.map((e) {
-          return SharedBudget(
-            name: catNames[e.key] ?? 'Shared',
-            spent: e.value,
-            limit: e.value * 1.5, // estimate budget as 1.5x current spend
-            color: catColors[e.key] ?? '#00E676',
-          );
-        }).toList();
-
-        state = state.copyWith(
-          members: members,
-          sharedBudgets: sharedBudgets,
-          loading: false,
-        );
-      } else {
-        state = state.copyWith(
-          loading: false,
-          error: resp['error']?.toString() ?? 'Failed to load family data',
-        );
-      }
+      final members = await FinTrackRepository.fetchFamilyMembers();
+      state = state.copyWith(
+        members: members.map((dto) => FamilyMember.fromDto(dto)).toList(),
+        loading: false,
+      );
     } catch (e) {
       state = state.copyWith(
         loading: false,
@@ -182,24 +132,20 @@ class FamilyNotifier extends StateNotifier<FamilyState> {
   }
 
   Future<void> inviteMember(String email, String role) async {
-    if (_repo == null) return;
     try {
-      final resp = await _repo!.inviteFamilyMember({'email': email, 'role': role});
-      if (resp['ok'] == true) {
-        // Refresh the list after adding
-        await fetchFamilyData();
-      } else {
-        state = state.copyWith(error: resp['error']?.toString() ?? 'Failed to invite member');
-      }
+      final dto = await FinTrackRepository.inviteFamilyMember(email: email, role: role);
+      state = state.copyWith(
+        members: [...state.members, FamilyMember.fromDto(dto)],
+        error: null,
+      );
     } catch (e) {
       state = state.copyWith(error: e.toString());
     }
   }
 
   Future<void> removeMember(String id) async {
-    if (_repo == null) return;
     try {
-      await _repo!.removeFamilyMember(id);
+      await FinTrackRepository.removeFamilyMember(id);
       state = state.copyWith(
         members: state.members.where((m) => m.id != id).toList(),
       );
@@ -210,20 +156,5 @@ class FamilyNotifier extends StateNotifier<FamilyState> {
 
   void clearError() {
     state = state.copyWith(error: null);
-  }
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
-  String _getProfileEmail() => _tryGetProfile()?.email ?? '';
-  String _getProfileName() => _tryGetProfile()?.name ?? 'User';
-  String _getProfileColor() => _tryGetProfile()?.avatarColor ?? '#6C5CE7';
-
-  UserProfile? _tryGetProfile() {
-    try {
-      // Try to read profile from fintrack_provider's container
-      return null; // fallback — will use defaults
-    } catch (_) {
-      return null;
-    }
   }
 }
