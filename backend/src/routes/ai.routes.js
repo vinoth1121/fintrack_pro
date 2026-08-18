@@ -331,7 +331,9 @@ router.post('/receipt', async (req, res, next) => {
           messages: [
             {
               role: 'system',
-              content: `You are a receipt scanner. You extract structured data from receipt images or receipt text. Return ONLY valid JSON with this shape:
+              content: `You are a receipt scanner for FinTrack Pro. You extract structured data from the receipt image/text the user provides. INTERNAL DATA ONLY: you must NOT look up, fetch, or invent any external/real-world information (live prices, exchange rates, merchant databases, web data). Use only what is printed on the receipt.
+
+Return ONLY valid JSON (no prose, no markdown code fences) with this exact shape:
 {
   "merchant": "Store Name",
   "total": 125.50,
@@ -346,7 +348,7 @@ router.post('/receipt', async (req, res, next) => {
   "rawText": "Raw text from receipt"
 }
 If you cannot read the receipt, set rawText to "Unable to parse" and merchant to "Unknown".
-Categories: Food & Dining, Shopping, Grocery, Transport, Health, Entertainment, Utilities, Education, Rent, Other.`,
+Allowed categories: Food & Dining, Shopping, Grocery, Transport, Health, Entertainment, Utilities, Education, Rent, Other.`,
             },
             {
               role: 'user',
@@ -355,6 +357,7 @@ Categories: Food & Dining, Shopping, Grocery, Transport, Health, Entertainment, 
           ],
           temperature: 0.1,
           max_tokens: 500,
+          response_format: { type: 'json_object' },
         }),
       });
 
@@ -432,8 +435,9 @@ router.post('/voice', async (req, res, next) => {
           messages: [
             {
               role: 'system',
-              content: `You are a transaction parser for FinTrack Pro. Parse user speech/text into structured transaction JSON. Return ONLY JSON.
+              content: `You are a transaction parser for FinTrack Pro. Parse the user's speech/text into a structured transaction. INTERNAL DATA ONLY: never fetch or invent external/real-world information (live rates, prices, merchant lookups, web data). Use only what the user said.
 
+Return ONLY valid JSON (no prose, no markdown code fences).
 Rules:
 - Categories: Food & Dining, Grocery, Transport, Health, Entertainment, Utilities, Education, Rent, Shopping, Income, Salary, Freelance, Commission, Other
 - Type: "expense" or "income"
@@ -443,12 +447,14 @@ Rules:
           ],
           temperature: 0.1,
           max_tokens: 200,
+          response_format: { type: 'json_object' },
         }),
       });
 
       const data = await response.json().catch(() => ({}));
       content = data?.choices?.[0]?.message?.content?.trim() || '';
     } catch (err) {
+      markProviderDead();
       console.warn('AI voice provider error, fallback to mock:', err.message);
       content = '';
     }
@@ -512,7 +518,7 @@ router.post('/insights', async (req, res, next) => {
           messages: [
             {
               role: 'system',
-              content: `You are an AI Insights engine for FinTrack Pro. Analyze transaction data and return structured JSON. The user currency is ₹ (INR).
+              content: `You are an AI Insights engine for FinTrack Pro. Analyze the transaction data provided and return structured JSON. The user currency is ₹ (INR). INTERNAL DATA ONLY: base every number on the user's own transactions supplied below. Never fetch or invent external/real-world figures (live rates, market data, web sources).
 
 Return ONLY valid JSON with this shape:
 {
@@ -534,6 +540,7 @@ Provide at least 2 insight cards. Use the user's data to personalize ALL values.
           ],
           temperature: 0.5,
           max_tokens: 1000,
+          response_format: { type: 'json_object' },
         }),
       });
 
@@ -600,7 +607,7 @@ router.post('/weekly-summary', async (req, res, next) => {
           messages: [
             {
               role: 'system',
-              content: `You generate weekly summary headline for FinTrack Pro. Currency is ₹ (INR). Return ONLY JSON:
+              content: `You generate a weekly summary headline for FinTrack Pro. Currency is ₹ (INR). INTERNAL DATA ONLY: use only the transactions supplied. Never fetch or invent external/real-world figures. Return ONLY valid JSON (no prose, no markdown fences):
 { "title": "Short heading", "body": "One-paragraph summary", "highlights": ["Highlight 1", "Highlight 2", "Highlight 3"] }`,
             },
             {
@@ -610,6 +617,7 @@ router.post('/weekly-summary', async (req, res, next) => {
           ],
           temperature: 0.5,
           max_tokens: 500,
+          response_format: { type: 'json_object' },
         }),
       });
 
