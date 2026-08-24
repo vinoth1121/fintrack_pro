@@ -24,7 +24,7 @@ import '../../features/notes/presentation/screens/notes_screen.dart';
 import '../../features/calculator/presentation/screens/calculator_hub_screen.dart';
 import '../../features/currency/presentation/screens/currency_converter_screen.dart';
 import '../../features/ai_chat/presentation/screens/ai_chat_screen.dart';
-import '../../features/reports/presentation/screens/reports_screen.dart';
+import '../../features/reports/ai_reports_screen.dart';
 import '../../features/settings/presentation/screens/settings_screen.dart';
 import '../../features/profile/presentation/screens/profile_screen.dart';
 import '../../features/notifications/presentation/screens/notifications_screen.dart';
@@ -259,7 +259,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: AppRoutes.reports,
             pageBuilder: (context, state) => _buildNoTransitionPage(
               state: state,
-              child: const ReportsScreen(),
+              child: const AIReportsScreen(),
             ),
           ),
           GoRoute(

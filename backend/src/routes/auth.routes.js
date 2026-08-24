@@ -258,15 +258,8 @@ router.post('/otp/send', async (req, res, next) => {
 
     const existing = await pool.query('SELECT * FROM users WHERE email = $1', [normalizedEmail]);
     if (existing.rows.length === 0) {
-      const password = req.body.password || ('pass_' + Math.random().toString(36).slice(2, 10));
-      const passwordHash = await bcrypt.hash(password, 12);
-      const userId = uuid();
-      const now = new Date().toISOString();
-      await pool.query(
-        `INSERT INTO users (id, full_name, email, password_hash, currency, is_email_verified, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [userId, normalizedEmail.split('@')[0], normalizedEmail, passwordHash, 'INR', false, now, now],
-      );
+      // Do not auto-create demo users. Require explicit registration.
+      return res.status(404).json({ ok: false, error: 'User not found. Please register first.' });
     }
 
     const code = String(Math.floor(100000 + Math.random() * 900000));
@@ -506,19 +499,10 @@ router.post('/phone/verify', async (req, res, next) => {
 
     const now = new Date().toISOString();
 
-    // Find or create user by phone
+    // Find user by phone
     let userResult = await pool.query('SELECT * FROM users WHERE phone = $1', [normalized]);
-    let user;
     if (userResult.rows.length === 0) {
-      const userId = uuid();
-      const placeholderEmail = `phone_${normalized}@fintrack.local`;
-      const passwordHash = await bcrypt.hash('phone_' + Math.random().toString(36).slice(2), 12);
-      userResult = await pool.query(
-        `INSERT INTO users (id, full_name, email, password_hash, phone, currency, is_email_verified, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-         RETURNING *`,
-        [userId, 'User ' + normalized.slice(-4), placeholderEmail, passwordHash, normalized, 'INR', true, now, now],
-      );
+      return res.status(404).json({ ok: false, error: 'User not found. Please register first.' });
     }
     user = formatUser(userResult.rows[0]);
 

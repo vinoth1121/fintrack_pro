@@ -11,9 +11,10 @@ import '../../data/models/models.dart';
 import '../../data/repositories/ai_repository.dart';
 import '../../l10n/app_localizations.dart';
 import '../../providers/fintrack_provider.dart';
-import '../../core/utils/speech_stub.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:permission_handler/permission_handler.dart';
 
-enum _VoicePhase { idle, recording, processing, review }
+enum _VoicePhase { idle, recording, confirm, processing, review }
 
 /// Voice screen — faithful port of the web `VoiceView`.
 /// 4-phase flow: idle → recording → processing → review.
@@ -31,7 +32,7 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
   String? _error;
   int _seconds = 0;
 
-  final SpeechToText _speech = SpeechToText();
+  final stt.SpeechToText _speech = stt.SpeechToText();
   bool _speechAvailable = false;
   bool _listening = false;
 
@@ -47,16 +48,18 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
       _warning = null;
     });
     try {
+      final micStatus = await Permission.microphone.request();
+      if (!micStatus.isGranted) {
+        setState(() {
+          _error = 'Microphone permission denied. Please allow mic access in settings.';
+          _phase = _VoicePhase.idle;
+        });
+        return;
+      }
       _speechAvailable = await _speech.initialize(
         onError: (err) => _onSpeechError(err.toString()),
         onStatus: (status) {
-          if (status == 'done' || status == 'notListening') {
-            if (_listening) {
-              _listening = false;
-              // Give the listener a tick then transition to processing.
-              Future.microtask(_stopRecording);
-            }
-          }
+          // Manual stop only; do not auto-stop on 'done'/'notListening' to avoid cutting speech mid-sentence.
         },
       );
       if (!_speechAvailable) {
@@ -73,11 +76,10 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
             _transcript = result.recognizedWords;
           });
         },
-        listenFor: const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 4),
-        listenOptions: const SpeechListenOptions(
+        listenOptions: stt.SpeechListenOptions(
+          listenFor: Duration(seconds: 120),
+          pauseFor: Duration(seconds: 10),
           partialResults: true,
-          cancelOnError: true,
         ),
       );
       // tick the timer
@@ -109,9 +111,13 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
     try {
       await _speech.stop();
     } catch (_) {}
+    // Allow final onResult to arrive before cancelling UI
+    await Future.delayed(const Duration(milliseconds: 800));
+    try {
+      await _speech.cancel();
+    } catch (_) {}
     if (!mounted) return;
-    setState(() => _phase = _VoicePhase.processing);
-    await _processAudio();
+    setState(() => _phase = _VoicePhase.confirm);
   }
 
   void _onSpeechError(String msg) {
@@ -126,9 +132,8 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
   Future<void> _processAudio() async {
     final t = ref.read(tProvider);
     final today = formatDateInput(DateTime.now());
-    // speech_to_text doesn't expose raw audio bytes; we forward an empty payload
-    // and rely on the on-device transcript captured during recording.
-    final result = await AiRepository.transcribeAndParse('', today: today);
+    // speech_to_text provides on-device transcript; send it to backend for parsing.
+    final result = await AiRepository.transcribeAndParse(_transcript, today: today);
     if (!mounted) return;
     final transcript = _transcript.isNotEmpty ? _transcript : result.transcript;
     setState(() {
@@ -206,6 +211,13 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
           seconds: _seconds,
           transcript: _transcript,
           onStop: _stopRecording,
+        );
+      case _VoicePhase.confirm:
+        return _ConfirmPhase(
+          key: const ValueKey('confirm'),
+          transcript: _transcript,
+          onConfirm: _processAudio,
+          onReRecord: _reset,
         );
       case _VoicePhase.processing:
         return const _ProcessingPhase(key: ValueKey('processing'));
@@ -441,6 +453,64 @@ class _RecordingPhase extends StatelessWidget {
                 style: AppTypography.body(context, size: 12).copyWith(color: l.mutedForeground),),
           const SizedBox(height: 16),
           GhostButton(icon: const Icon(Icons.stop), onPressed: onStop, child: Text(t.voice.stopRecording)),
+        ],
+      ),
+    ).animate().fadeIn(duration: 300.ms);
+  }
+}
+
+class _ConfirmPhase extends StatelessWidget {
+  final String transcript;
+  final VoidCallback onConfirm;
+  final VoidCallback onReRecord;
+  const _ConfirmPhase({super.key, required this.transcript, required this.onConfirm, required this.onReRecord});
+
+  @override
+  Widget build(BuildContext context) {
+    final l = context.lumina;
+    final t = ProviderScope.containerOf(context).read(tProvider);
+    return GlassCard(
+      padding: const EdgeInsets.all(40),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.check_circle_outline, size: 56, color: AppColors.iris),
+          const SizedBox(height: 16),
+          Text(t.voice.reviewConfirm, style: AppTypography.heading(context, size: 16)),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: l.surface2.withValues(alpha: 0.4),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: l.border),
+            ),
+            child: Text(
+              transcript.isEmpty ? 'No speech captured' : transcript,
+              textAlign: TextAlign.center,
+              style: AppTypography.body(context, size: 13).copyWith(color: l.foreground),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(
+                child: GhostButton(
+                  onPressed: onReRecord,
+                  child: Text(t.voice.recordAgain),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: GradientButton(
+                  onPressed: onConfirm,
+                  expanded: true,
+                  child: Text(t.voice.parsed),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     ).animate().fadeIn(duration: 300.ms);

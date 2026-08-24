@@ -58,10 +58,10 @@ class AiRepository {
   }
 
   /// Voice entry — ASR + LLM parse.
-  static Future<VoiceResult> transcribeAndParse(String base64Audio, {String? today}) async {
+  static Future<VoiceResult> transcribeAndParse(String transcript, {String? today}) async {
     try {
       final res = await dioClient.post(ApiEndpoints.aiVoice, data: {
-        'audio': base64Audio, 'today': today,
+        'transcript': transcript, 'today': today,
       },);
       final data = res.data as Map<String, dynamic>;
       return VoiceResult(

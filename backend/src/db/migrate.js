@@ -218,8 +218,11 @@ async function migrate() {
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         title VARCHAR(255) NOT NULL,
         body TEXT,
+        message TEXT,
         type VARCHAR(50) NULL DEFAULT 'info',
+        kind VARCHAR(50) NULL DEFAULT 'info',
         is_read BOOLEAN DEFAULT FALSE,
+        action TEXT,
         related_entity_type VARCHAR(50),
         related_entity_id UUID,
         created_at TIMESTAMPTZ DEFAULT NOW()

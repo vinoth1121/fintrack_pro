@@ -150,15 +150,14 @@ class _AppDrawer extends ConsumerWidget {
             Padding(
               padding: const EdgeInsets.all(20),
               child: Row(children: [
-                Container(
-                  width: 40, height: 40,
-                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), gradient: AppColors.brandGradient),
-                  child: const Icon(Icons.auto_awesome, color: Colors.white, size: 20),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.asset('assets/branding/logo.png', width: 40, height: 40, fit: BoxFit.cover),
                 ),
                 const SizedBox(width: 12),
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('FinTrack Pro', style: AppTypography.display(context, size: 15)),
-                  Text(t.appTaglineFallback, style: AppTypography.label(context, size: 10).copyWith(color: l.mutedForeground)),
+                  const SizedBox.shrink(),
                 ],),
               ],),
             ),
@@ -217,4 +216,4 @@ class _DrawerGroup { final String label; final List<_DrawerItem> items; const _D
 class _DrawerItem { final String path, label; final IconData icon; final int? badge; const _DrawerItem(this.path, this.label, this.icon, {this.badge}); }
 
 // helper extension for tagline fallback
-extension on AppT { String get appTaglineFallback => 'Lumina · AI Finance'; }
+extension on AppT { String get appTaglineFallback => ''; }

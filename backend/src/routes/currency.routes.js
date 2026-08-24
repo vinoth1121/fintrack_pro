@@ -13,15 +13,14 @@ async function getRates(base = 'INR') {
   const now = Date.now();
   if (cachedRates && lastFetched > now - 3600000) return cachedRates;
 
-  const API_KEY = process.env.EXCHANGE_RATE_API_KEY || '';
-  // Try exchangerate-api.com first, fall back to open.er-api.com
+  // Try free exchangerate.host first, which needs no key
   try {
     const resp = await fetch(
-      `https://open.er-api.com/v6/latest/${base}`,
-      { headers: API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {} },
+      `https://api.exchangerate.host/latest?base=${encodeURIComponent(base)}`,
     );
     if (!resp.ok) throw new Error('Free API down');
     const data = await resp.json();
+    if (!data.success || !data.rates) throw new Error('Invalid response');
     cachedRates = { base: base, rates: data.rates, lastUpdated: new Date().toISOString() };
     lastFetched = now;
     return cachedRates;

@@ -66,7 +66,12 @@ class ReportsNotifier extends StateNotifier<ReportsState> {
       final incomes = _ref.read(incomeListProvider).incomes.where((i) => _inPeriod(i.date)).toList();
 
       final file = await _generator.generateTransactionsCsv(expenses: expenses, incomes: incomes);
-      await Share.shareXFiles([XFile(file.path)], subject: 'FinTrack Pro Transactions Export');
+      await SharePlus.instance.share(
+        ShareParams(
+          subject: 'FinTrack Pro Transactions Export',
+          files: [XFile(file.path)],
+        ),
+      );
       await _logExport('CSV', 'Transactions Export');
 
       state = state.copyWith(exportStatus: ExportStatus.success);
@@ -94,7 +99,12 @@ class ReportsNotifier extends StateNotifier<ReportsState> {
         budgets: budgets,
         topExpenses: topExpenses.take(10).toList(),
       );
-      await Share.shareXFiles([XFile(file.path)], subject: 'FinTrack Pro Financial Summary');
+      await SharePlus.instance.share(
+        ShareParams(
+          subject: 'FinTrack Pro Financial Summary',
+          files: [XFile(file.path)],
+        ),
+      );
       await _logExport('PDF', 'Financial Summary Report');
 
       state = state.copyWith(exportStatus: ExportStatus.success);

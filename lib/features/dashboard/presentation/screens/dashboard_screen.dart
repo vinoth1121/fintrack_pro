@@ -120,10 +120,9 @@ class _DashboardAppBar extends ConsumerWidget {
             borderRadius: BorderRadius.circular(AppRadius.sm),
             border: Border.all(color: AppColors.darkBorder, width: 0.5),
           ),
-          child: const Icon(
-            Icons.menu_rounded,
-            color: AppColors.darkTextSecondary,
-            size: 20,
+          child: Image.asset(
+            'assets/branding/logo.png',
+            fit: BoxFit.contain,
           ),
         ),
         onPressed: onMenuTap,

@@ -183,12 +183,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                       delay: 400.ms,
                     ),
                 const SizedBox(height: 8),
-                Text(
-                  'Lumina · AI Personal Finance',
-                  style: AppTypography.body(context, size: 13).copyWith(
-                    color: l.mutedForeground,
-                  ),
-                ).animate().fadeIn(duration: 500.ms, delay: 700.ms),
+                const SizedBox.shrink(),
                 const SizedBox(height: 36),
                 // Loading dots
                 Row(

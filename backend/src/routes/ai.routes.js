@@ -284,7 +284,14 @@ router.post('/chat', async (req, res, next) => {
       [userMessage.substring(0, 80), convId],
     );
 
-    res.json({ ok: true, message: finalReply, conversationId: convId, provider });
+    const assistantMsg = {
+      id: require('crypto').randomUUID(),
+      role: 'assistant',
+      content: finalReply,
+      createdAt: new Date().toISOString(),
+    };
+
+    res.json({ ok: true, message: assistantMsg, conversationId: convId, provider });
   } catch (err) { next(err); }
 });
 
@@ -298,24 +305,29 @@ router.post('/receipt', async (req, res, next) => {
 
     const { enabled, apiKey, baseUrl, model } = aiConfig();
 
+    const parseReceiptFallback = (text) => {
+      const lines = String(text).split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+      const merchant = lines[0] || 'Unknown';
+      const totalMatch = text.match(/(?:total|amount due|balance due)[:\s]*([\d,]+\.?\d*)/i);
+      const total = totalMatch ? parseFloat(totalMatch[1].replace(/,/g,'')) : 0;
+      const dateMatch = text.match(/(\d{4}[-/]\d{2}[-/]\d{2})/);
+      const date = dateMatch ? dateMatch[1].replace(/-/g,'-') : new Date().toISOString().split('T')[0];
+      return {
+        merchant,
+        total,
+        subtotal: total,
+        tax: 0,
+        date,
+        currency: 'INR',
+        category: 'Shopping',
+        items: [],
+        rawText: text,
+      };
+    };
+
     if (!enabled || !apiKey || isProviderKnownDead()) {
-      return res.json({
-        ok: true,
-        receipt: {
-          merchant: 'Receipt Store',
-          total: 250.00,
-          subtotal: 220.00,
-          tax: 30.00,
-          date: new Date().toISOString().split('T')[0],
-          currency: 'INR',
-          category: 'Shopping',
-          items: [
-            { name: 'Item A', qty: 2, price: 60.00 },
-            { name: 'Item B', qty: 1, price: 100.00 },
-          ],
-          rawText: '[Mock] Receipt text — AI_ENABLED is false or no API key',
-        },
-      });
+      const receipt = parseReceiptFallback(receiptText);
+      return res.json({ ok: true, receipt });
     }
 
     let content = '';
@@ -377,12 +389,7 @@ Allowed categories: Food & Dining, Shopping, Grocery, Transport, Health, Enterta
       else if (jsonStr.startsWith('```')) jsonStr = jsonStr.replace(/^```\s*/, '').replace(/\s*```$/, '');
       receipt = JSON.parse(jsonStr);
     } catch {
-      receipt = {
-        merchant: 'Scanned Receipt',
-        total: 0, subtotal: 0, tax: 0,
-        date: new Date().toISOString().split('T')[0],
-        currency: 'INR', category: 'Other', items: [], rawText: content || '[Mock] Could not parse receipt — AI provider unreachable',
-      };
+      receipt = parseReceiptFallback(receiptText);
     }
 
     // Normalize numeric/date fields so the Flutter model never sees nulls.
@@ -409,14 +416,29 @@ router.post('/voice', async (req, res, next) => {
 
     const { enabled, apiKey, baseUrl, model } = aiConfig();
 
+    const parseVoiceFallback = (text) => {
+      const t = String(text).toLowerCase();
+      const amountMatch = t.match(/(\d+[\.,]?\d*)\s*(?:rs|rup|rupees|inr|dollars?|usd)?/);
+      const amount = amountMatch ? parseFloat(amountMatch[1].replace(',','')) : 0;
+      const merchantMatch = t.match(/(?:at|from|in)\s+([a-z0-9\s&]+?)(?:\s+for|\s+on|\s*$)/);
+      const merchant = merchantMatch ? merchantMatch[1].trim() : 'Unknown';
+      const isIncome = /(income|salary|received|credited)/.test(t);
+      return {
+        type: isIncome ? 'income' : 'expense',
+        amount,
+        merchant: merchant.charAt(0).toUpperCase() + merchant.slice(1),
+        category: 'Food & Dining',
+        date,
+        note: text.slice(0,100),
+      };
+    };
+
     if (!enabled || !apiKey || isProviderKnownDead()) {
+      const transaction = parseVoiceFallback(rawText || '');
       return res.json({
         ok: true,
-        transcript: rawText || 'Spent 500 rupees on lunch',
-        transaction: {
-          type: 'expense', amount: 500, merchant: 'Restaurant',
-          category: 'Food & Dining', date, note: 'Voice entry',
-        },
+        transcript: rawText || '',
+        transaction,
       });
     }
 
@@ -470,7 +492,7 @@ Rules:
       tx.category = tx.category || 'Other';
       tx.note = tx.note || '';
     } catch {
-      tx = { type: 'expense', amount: 500, merchant: 'Entry', category: 'Other', date, note: 'Voice translation' };
+      tx = parseVoiceFallback(trans);
     }
 
     res.json({ ok: true, transcript: trans, transaction: tx });

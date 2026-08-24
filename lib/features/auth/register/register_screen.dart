@@ -8,7 +8,6 @@ import '../../../core/utils/toast.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_typography.dart';
 import '../../../data/repositories/auth_repository.dart';
-import '../../../providers/auth_provider.dart';
 import '../login/whatsapp_login_sheet.dart';
 
 /// Registration screen — professional UI with social login buttons +

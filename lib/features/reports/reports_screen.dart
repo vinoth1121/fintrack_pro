@@ -103,7 +103,13 @@ class _ReportsViewState extends ConsumerState<_ReportsView> {
   }
 
   Future<File> _writeTempFile(String name, List<int> bytes) async {
-    final dir = await getTemporaryDirectory();
+    Directory dir;
+    if (Platform.isAndroid) {
+      final dirs = await getExternalStorageDirectories();
+      dir = (dirs != null && dirs.isNotEmpty) ? dirs.first : await getTemporaryDirectory();
+    } else {
+      dir = await getApplicationDocumentsDirectory();
+    }
     final file = File('${dir.path}/$name');
     await file.writeAsBytes(bytes, flush: true);
     return file;
@@ -134,7 +140,12 @@ class _ReportsViewState extends ConsumerState<_ReportsView> {
         csv.codeUnits,
       );
       if (!mounted) return;
-      await Share.shareXFiles([XFile(file.path)], text: 'FinTrack Pro report (${ranged.length} transactions)');
+      await SharePlus.instance.share(
+        ShareParams(
+          text: 'FinTrack Pro report (${ranged.length} transactions)',
+          files: [XFile(file.path)],
+        ),
+      );
       if (!mounted) return;
       showAppToast(
         context,
@@ -197,7 +208,12 @@ class _ReportsViewState extends ConsumerState<_ReportsView> {
         await doc.save(),
       );
       if (!mounted) return;
-      await Share.shareXFiles([XFile(file.path)], text: 'FinTrack Pro report (${ranged.length} transactions)');
+      await SharePlus.instance.share(
+        ShareParams(
+          text: 'FinTrack Pro report (${ranged.length} transactions)',
+          files: [XFile(file.path)],
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       showAppToast(context, 'PDF export failed: $e', kind: ToastKind.error);

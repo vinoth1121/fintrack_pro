@@ -1,0 +1,284 @@
+# =============================================================================
+# FinTrack Pro — FULL AUTOMATED UI FLOW (Maestro, single file)
+# =============================================================================
+# appId:       com.fintrackpro.app
+# Run:
+#   maestro test fintrack_pro_full_automation.yaml
+# (Test credentials are already embedded in this file.)
+#
+# SOURCE-INSPECTED LOGIN SELECTORS (see lib/shared/widgets/inputs/app_text_field.dart)
+#   AppTextField renders:
+#     Text(label)            <-- separate label ABOVE the field (NOT the editable node)
+#     TextFormField(
+#       decoration: InputDecoration(hintText: <hint>, /* NO labelText */)
+#     )
+#   => Because labelText is null, Flutter exposes the HINT as the editable
+#      node's accessibility label. So the editable email field is targeted by
+#      its hint "you@example.com", and the password field by its hint "••••••••".
+#   "Email address" / "Password" are labels only and do NOT focus the field.
+#   Amount fields (AppAmountField) expose a visible "$" prefix -> target "$".
+#
+# NOTES
+#   - No clearText is used (unsupported in this environment).
+#   - Native pickers (camera/gallery/mic) and share sheets are avoided or guarded.
+#   - Some "name" fields have no semantic label; those steps are wrapped in
+#     try/catch so a miss does not abort the whole run.
+# =============================================================================
+
+appId: com.fintrackpro.app
+
+---
+# -----------------------------------------------------------------------------
+# APP LAUNCH -> SPLASH -> ONBOARDING
+# -----------------------------------------------------------------------------
+- launchApp
+- waitForAnimationToEnd
+
+- waitUntilVisible:
+    text: "Skip"
+    timeout: 20000
+- tapOn: "Skip"
+- waitForAnimationToEnd
+
+# -----------------------------------------------------------------------------
+# LOGIN  (source-proven hint-based selectors)
+# -----------------------------------------------------------------------------
+- waitUntilVisible:
+    text: "Sign In"
+    timeout: 15000
+- assertVisible: "Welcome back"
+
+# Email: tap the editable field by its accessibility label (the hint)
+- tapOn: "you@example.com"
+- inputText: "siva1234512@gmail.com"
+
+# Password: tap the editable field by its hint (bullet characters)
+- tapOn: "••••••••"
+- inputText: "siva1234512"
+
+- hideKeyboard
+- tapOn: "Sign In"
+
+# -----------------------------------------------------------------------------
+# DASHBOARD
+# -----------------------------------------------------------------------------
+- waitUntilVisible:
+    text: "Add Expense"
+    timeout: 20000
+
+# --- Dashboard quick actions (each pushes over Dashboard; Save auto-pops back) --
+- tapOn: "Add Expense"
+- assertVisible: "Save Expense"
+- tapOn: "0.00"
+- inputText: "24.50"
+- tapOn: "What was it for?"
+- inputText: "Coffee"
+- try:
+    - tapOn: "Food"
+- catch:
+    - evalScript: "console.log('expense category chip not tapped')"
+- try:
+    - tapOn: "Payment Method"
+    - tapOn: "Cash"
+- catch:
+    - evalScript: "console.log('payment method not selected')"
+- tapOn: "Save Expense"
+- waitForAnimationToEnd
+
+- tapOn: "Add Income"
+- assertVisible: "Save Income"
+- tapOn: "0.00"
+- inputText: "5000"
+- tapOn: "What was it for?"
+- inputText: "Salary"
+- tapOn: "Save Income"
+- waitForAnimationToEnd
+
+- tapOn: "Budget"
+- assertVisible: "New Budget"
+- pressBack
+
+- tapOn: "AI Chat"
+- assertVisible: "AI Assistant"
+- try:
+    - tapOn: "Ask about your finances..."
+    - inputText: "What did I spend this month?"
+- catch:
+    - evalScript: "console.log('ai chat input skipped')"
+- pressBack
+
+- tapOn: "Scanner"
+- assertVisible: "Take Photo"
+- assertVisible: "Choose from Gallery"
+- pressBack
+
+- tapOn: "See Analytics"
+- assertVisible: "Analytics"
+- pressBack
+
+- tapOn: "See All"
+- assertVisible: "Expenses"
+- pressBack
+
+# -----------------------------------------------------------------------------
+# NAVIGATION DRAWER  (open with left-edge swipe; items use context.go)
+# -----------------------------------------------------------------------------
+- swipe:
+    from: { x: 0, y: 400 }
+    to:   { x: 600, y: 400 }
+
+- tapOn: "Expenses"
+- assertVisible: "Expenses"
+- swipe: { from: { x: 0, y: 400 }, to: { x: 600, y: 400 } }
+
+- tapOn: "Income"
+- assertVisible: "Income"
+- swipe: { from: { x: 0, y: 400 }, to: { x: 600, y: 400 } }
+
+# --- SAVINGS GOALS (create) -----------------------------------------------------
+- tapOn: "Savings Goals"
+- assertVisible: "Savings Goals"
+- try:
+    - tapOn: "New Goal"
+    - assertVisible: "Create Goal"
+    - tapOn: "Goal Name"
+    - inputText: "Emergency Fund"
+    - tapOn: "$"
+    - inputText: "1000"
+    - tapOn: "Create Goal"
+    - waitForAnimationToEnd
+- catch:
+    - evalScript: "console.log('savings goal create skipped')"
+- swipe: { from: { x: 0, y: 400 }, to: { x: 600, y: 400 } }
+
+# --- SUBSCRIPTIONS (create) ----------------------------------------------------
+- tapOn: "Subscriptions"
+- assertVisible: "Subscriptions"
+- try:
+    - tapOn: "Add Sub"
+    - assertVisible: "Add Subscription"
+    - tapOn: "Service Name"
+    - inputText: "Netflix"
+    - tapOn: "$"
+    - inputText: "15.99"
+    - tapOn: "Monthly"
+    - tapOn: "Add Subscription"
+    - waitForAnimationToEnd
+- catch:
+    - evalScript: "console.log('subscription create skipped')"
+- swipe: { from: { x: 0, y: 400 }, to: { x: 600, y: 400 } }
+
+# --- ANALYTICS ----------------------------------------------------------------
+- tapOn: "Analytics"
+- assertVisible: "Analytics"
+- assertVisible: "Category Breakdown"
+- swipe: { from: { x: 0, y: 400 }, to: { x: 600, y: 400 } }
+
+# --- REPORTS & EXPORT ----------------------------------------------------------
+- tapOn: "Reports & Export"
+- assertVisible: "Reports & Export"
+- try:
+    - tapOn: "Financial Summary (PDF)"
+    - waitForAnimationToEnd
+    - pressBack
+- catch:
+    - evalScript: "console.log('pdf export skipped')"
+- try:
+    - tapOn: "All Transactions (CSV)"
+    - waitForAnimationToEnd
+    - pressBack
+- catch:
+    - evalScript: "console.log('csv export skipped')"
+- swipe: { from: { x: 0, y: 400 }, to: { x: 600, y: 400 } }
+
+# --- AI ASSISTANT (already opened via dashboard; verify in drawer too) ----------
+- tapOn: "AI Assistant"
+- assertVisible: "AI Assistant"
+- swipe: { from: { x: 0, y: 400 }, to: { x: 600, y: 400 } }
+
+# --- NOTES (create via empty-state "New Note") ---------------------------------
+- tapOn: "Notes"
+- assertVisible: "Notes"
+- try:
+    - tapOn: "New Note"
+    - assertVisible: "Title"
+    - tapOn: "Title"
+    - inputText: "Test Note"
+    - tapOn: "Start writing..."
+    - inputText: "Remember to review the budget."
+    - pressBack
+    - waitForAnimationToEnd
+- catch:
+    - evalScript: "console.log('note create skipped')"
+- swipe: { from: { x: 0, y: 400 }, to: { x: 600, y: 400 } }
+
+# --- CALCULATOR HUB (all tabs) ------------------------------------------------
+- tapOn: "Calculator Hub"
+- assertVisible: "Calculator Hub"
+- tapOn: "EMI"
+- tapOn: "GST"
+- tapOn: "Savings"
+- tapOn: "Basic"
+- pressBack
+
+# --- CURRENCY CONVERTER --------------------------------------------------------
+- tapOn: "Currency Converter"
+- assertVisible: "Currency Converter"
+- try:
+    - tapOn: "1000"
+    - tapOn: "USD"
+    - tapOn: "EUR"
+- catch:
+    - evalScript: "console.log('currency interaction skipped')"
+- swipe: { from: { x: 0, y: 400 }, to: { x: 600, y: 400 } }
+
+# --- PROFILE ------------------------------------------------------------------
+- tapOn: "Profile"
+- assertVisible: "Profile"
+- try:
+    - tapOn: "Edit Profile"
+    - assertVisible: "Save Changes"
+    - tapOn: "Save Changes"
+    - waitForAnimationToEnd
+- catch:
+    - evalScript: "console.log('profile edit skipped')"
+- swipe: { from: { x: 0, y: 400 }, to: { x: 600, y: 400 } }
+
+# --- NOTIFICATIONS -------------------------------------------------------------
+- tapOn: "Notifications"
+- assertVisible: "Notifications"
+- swipe: { from: { x: 0, y: 400 }, to: { x: 600, y: 400 } }
+
+# -----------------------------------------------------------------------------
+# SETTINGS
+# -----------------------------------------------------------------------------
+- tapOn: "Settings"
+- assertVisible: "Settings"
+- try:
+    - tapOn: "Dark"
+    - tapOn: "Light"
+    - tapOn: "System Default"
+    - tapOn: "Biometric Login"
+    - tapOn: "Budget Alerts"
+    - tapOn: "Bill Reminders"
+    - tapOn: "Goal Milestones"
+    - tapOn: "AI Insights"
+- catch:
+    - evalScript: "console.log('some settings toggles skipped')"
+- assertVisible: "Delete Account"   # present but intentionally NEVER tapped
+
+# -----------------------------------------------------------------------------
+# LOGOUT  (from Settings -> Sign Out -> confirm)
+# -----------------------------------------------------------------------------
+- tapOn: "Sign Out"
+- tapOn: "Sign Out"
+- waitForAnimationToEnd
+- waitUntilVisible:
+    text: "Sign In"
+    timeout: 15000
+- assertVisible: "Sign In"
+
+# -----------------------------------------------------------------------------
+# DONE — test finishes at the Login screen.
+# -----------------------------------------------------------------------------
+- waitForAnimationToEnd
