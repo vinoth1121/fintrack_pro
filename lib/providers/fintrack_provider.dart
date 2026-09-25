@@ -383,6 +383,30 @@ class FinTrackNotifier extends StateNotifier<FinTrackState> {
   // Profile
   void updateProfile(UserProfile patch) { state = state.copyWith(profile: patch); _persist(); }
 
+  /// Apply the authenticated account's identity to the profile so the app
+  /// always shows the real logged-in user instead of the demo seed profile.
+  void applyAuthUser({
+    required String name,
+    required String email,
+    String? avatarColor,
+    String? baseCurrency,
+    double? monthlyIncomeGoal,
+  }) {
+    state = state.copyWith(
+      profile: state.profile.copyWith(
+        name: name.isNotEmpty ? name : null,
+        email: email.isNotEmpty ? email : null,
+        avatarColor: avatarColor,
+        baseCurrency: baseCurrency,
+        monthlyIncomeGoal:
+            (monthlyIncomeGoal != null && monthlyIncomeGoal > 0)
+                ? monthlyIncomeGoal
+                : null,
+      ),
+    );
+    _persist();
+  }
+
   // Reset
   void resetAll() {
     state = FinTrackState(transactions: seedTransactions, onboardingDone: true, booted: true);

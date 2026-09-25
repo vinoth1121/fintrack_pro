@@ -9,7 +9,7 @@ import '../../core/utils/formatters.dart';
 import '../../core/utils/toast.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/models.dart';
-import '../../data/repositories/ai_repository.dart';
+import '../../core/services/local_intelligence.dart';
 import '../../providers/fintrack_provider.dart';
 
 /// Notifications screen — written from scratch.
@@ -75,19 +75,9 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   Future<void> _generateWeeklySummary() async {
     setState(() => _generatingSummary = true);
     try {
-      final s = ref.read(fintrackProvider);
-      final categoryNames = {for (final c in s.categories) c.id: c.name};
-      final summary = await AiRepository.weeklySummary(
-        transactions: s.transactions,
-        currency: s.profile.baseCurrency,
-        categoryNameMap: categoryNames,
-      );
-      if (summary == null) {
-        if (mounted) {
-          showAppToast(context, 'Could not generate a summary right now — check your connection.', kind: ToastKind.error);
-        }
-        return;
-      }
+      // Generated on-device from local data — never fails for network/AI.
+      final summary =
+          LocalIntelligence.buildWeeklySummary(ref.read(fintrackProvider));
       final body = summary.body +
           (summary.highlights.isNotEmpty
               ? '\n\n${summary.highlights.map((h) => '• $h').join('\n')}'

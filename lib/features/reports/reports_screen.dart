@@ -371,15 +371,17 @@ class _ReportsViewState extends ConsumerState<_ReportsView> {
                   for (var i = 0; i < tiles.length; i += perRow)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          for (var j = i; j < i + perRow && j < tiles.length; j++) ...[
-                            Expanded(child: tiles[j]),
-                            if (j < i + perRow - 1 && j < tiles.length - 1)
-                              const SizedBox(width: 12),
+                      child: IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (var j = i; j < i + perRow && j < tiles.length; j++) ...[
+                              Expanded(child: tiles[j]),
+                              if (j < i + perRow - 1 && j < tiles.length - 1)
+                                const SizedBox(width: 12),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     )
                         .animate(delay: (100 + i * 30).ms)
@@ -513,13 +515,15 @@ class _ReportsViewState extends ConsumerState<_ReportsView> {
               ).animate().fadeIn(duration: 400.ms, delay: 320.ms).slideY(begin: 0.05, end: 0);
 
               if (twoCol) {
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(child: left),
-                    const SizedBox(width: 16),
-                    Expanded(child: right),
-                  ],
+                return IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(child: left),
+                      const SizedBox(width: 16),
+                      Expanded(child: right),
+                    ],
+                  ),
                 );
               }
               return Column(
@@ -626,15 +630,17 @@ class _ReportsViewState extends ConsumerState<_ReportsView> {
                         for (var i = 0; i < cells.length; i += (twoCol ? 2 : 4))
                           Padding(
                             padding: const EdgeInsets.only(bottom: 12),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                for (var j = i; j < i + (twoCol ? 2 : 4) && j < cells.length; j++) ...[
-                                  Expanded(child: cells[j]),
-                                  if (j < i + (twoCol ? 2 : 4) - 1 && j < cells.length - 1)
-                                    const SizedBox(width: 12),
+                            child: IntrinsicHeight(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  for (var j = i; j < i + (twoCol ? 2 : 4) && j < cells.length; j++) ...[
+                                    Expanded(child: cells[j]),
+                                    if (j < i + (twoCol ? 2 : 4) - 1 && j < cells.length - 1)
+                                      const SizedBox(width: 12),
+                                  ],
                                 ],
-                              ],
+                              ),
                             ),
                           ),
                       ],

@@ -11,6 +11,7 @@ class AppConfig {
   ///
   /// Override at build time with:
   ///   `flutter run --dart-define=API_BASE_URL=http://192.168.1.5:3000`
+  /// or set it once at runtime from Settings → "Server connection".
   static String get apiBaseUrl {
     const override = String.fromEnvironment('API_BASE_URL');
     if (override.isNotEmpty) return override;

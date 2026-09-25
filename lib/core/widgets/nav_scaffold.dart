@@ -214,6 +214,3 @@ class _AppDrawer extends ConsumerWidget {
 
 class _DrawerGroup { final String label; final List<_DrawerItem> items; const _DrawerGroup(this.label, this.items); }
 class _DrawerItem { final String path, label; final IconData icon; final int? badge; const _DrawerItem(this.path, this.label, this.icon, {this.badge}); }
-
-// helper extension for tagline fallback
-extension on AppT { String get appTaglineFallback => ''; }

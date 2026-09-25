@@ -14,29 +14,60 @@ import '../../core/widgets/widgets.dart';
 import '../../data/seed/seed_data.dart';
 import '../../l10n/app_localizations.dart';
 
-/// Fetches live exchange rates (base INR) from a free, no-key API and caches
-/// them locally for 6h. Falls back to the static [currencyRates] map (and
-/// then to the local cache) if the network call fails, so the converter
-/// never breaks — it just stops being "live" until connectivity returns.
+enum _RatesSource { live, cached, offline }
+
+class _RatesResult {
+  final Map<String, double> rates;
+  final _RatesSource source;
+  final DateTime fetchedAt;
+  const _RatesResult(this.rates, this.source, this.fetchedAt);
+}
+
+/// Fetches live exchange rates (base INR) from free, no-key APIs and caches
+/// them locally for 6h. Falls back to the cache, then to the static
+/// [currencyRates] map, so the converter never breaks — and the UI badge
+/// always shows exactly which source the displayed numbers came from.
 class _LiveRates {
   static const _cacheKey = 'currency_live_rates_inr_v1';
   static const _cacheTsKey = 'currency_live_rates_inr_ts_v1';
   static const _maxAge = Duration(hours: 6);
 
-  static Future<Map<String, double>> fetch() async {
-    final prefs = await SharedPreferences.getInstance();
+  static Future<Map<String, double>?> _tryFetchLive() async {
+    // Primary provider: open.er-api.com
     try {
       final res = await Dio().get('https://open.er-api.com/v6/latest/INR');
       final data = res.data as Map<String, dynamic>;
       if (data['result'] == 'success') {
         final raw = data['rates'] as Map<String, dynamic>;
+        return raw.map((k, v) => MapEntry(k, (v as num).toDouble()));
+      }
+    } catch (_) {
+      // try backup provider below
+    }
+    // Backup provider: frankfurter.app (ECB reference rates)
+    try {
+      final res = await Dio().get('https://api.frankfurter.app/latest?from=INR');
+      final data = res.data as Map<String, dynamic>;
+      final raw = data['rates'] as Map<String, dynamic>?;
+      if (raw != null && raw.isNotEmpty) {
         final rates = raw.map((k, v) => MapEntry(k, (v as num).toDouble()));
-        await prefs.setString(_cacheKey, jsonEncode(rates));
-        await prefs.setInt(_cacheTsKey, DateTime.now().millisecondsSinceEpoch);
+        rates['INR'] = 1;
         return rates;
       }
     } catch (_) {
       // fall through to cache/static below
+    }
+    return null;
+  }
+
+  static Future<_RatesResult> fetch() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final live = await _tryFetchLive();
+    if (live != null) {
+      await prefs.setString(_cacheKey, jsonEncode(live));
+      await prefs.setInt(_cacheTsKey, DateTime.now().millisecondsSinceEpoch);
+      return _RatesResult(live, _RatesSource.live, DateTime.now());
     }
 
     final cachedRaw = prefs.getString(_cacheKey);
@@ -45,9 +76,11 @@ class _LiveRates {
         DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(cachedTs)) < _maxAge) {
       final cached = (jsonDecode(cachedRaw) as Map<String, dynamic>)
           .map((k, v) => MapEntry(k, (v as num).toDouble()));
-      return cached;
+      return _RatesResult(
+          cached, _RatesSource.cached, DateTime.fromMillisecondsSinceEpoch(cachedTs),);
     }
-    return currencyRates;
+    return _RatesResult(currencyRates, _RatesSource.offline,
+        DateTime.fromMillisecondsSinceEpoch(0),);
   }
 }
 
@@ -94,7 +127,13 @@ class _CurrencyScreenState extends ConsumerState<CurrencyScreen> {
 
   Map<String, double> _rates = currencyRates;
   bool _ratesLoading = true;
+  _RatesSource _ratesSource = _RatesSource.offline;
   DateTime? _ratesFetchedAt;
+
+  /// Real 30-day history for the current pair; null while loading/failed
+  /// (in which case the synthetic estimate anchored at the live rate is used).
+  List<_RatePoint>? _historyPoints;
+  bool _historyLoading = false;
 
   @override
   void initState() {
@@ -103,12 +142,53 @@ class _CurrencyScreenState extends ConsumerState<CurrencyScreen> {
   }
 
   Future<void> _loadLiveRates() async {
-    final rates = await _LiveRates.fetch();
+    if (!_ratesLoading && mounted) setState(() => _ratesLoading = true);
+    final result = await _LiveRates.fetch();
     if (!mounted) return;
     setState(() {
-      _rates = rates;
+      _rates = result.rates;
       _ratesLoading = false;
-      _ratesFetchedAt = DateTime.now();
+      _ratesSource = result.source;
+      _ratesFetchedAt =
+          result.source == _RatesSource.offline ? null : result.fetchedAt;
+    });
+    await _loadHistory();
+  }
+
+  /// Pulls the real 30-day ECB rate series for the selected pair from
+  /// frankfurter.app. Returns null when the pair/network is unavailable.
+  Future<List<_RatePoint>?> _fetchHistory(String from, String to) async {
+    if (from == to) return null;
+    try {
+      final end = DateTime.now();
+      final start = end.subtract(const Duration(days: 29));
+      String fmt(DateTime d) =>
+          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+      final res = await Dio().get(
+        'https://api.frankfurter.app/${fmt(start)}..${fmt(end)}?from=$from&to=$to',
+      );
+      final data = res.data as Map<String, dynamic>;
+      final rawRates = data['rates'] as Map<String, dynamic>?;
+      if (rawRates == null || rawRates.isEmpty) return null;
+      final entries = rawRates.entries.toList()
+        ..sort((a, b) => a.key.compareTo(b.key));
+      return entries.map((e) {
+        final v = ((e.value as Map<String, dynamic>)[to] as num).toDouble();
+        return _RatePoint(_fmtDay(DateTime.parse(e.key)), v);
+      }).toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _loadHistory() async {
+    if (_historyLoading) return;
+    setState(() => _historyLoading = true);
+    final points = await _fetchHistory(_from, _to);
+    if (!mounted) return;
+    setState(() {
+      _historyPoints = points;
+      _historyLoading = false;
     });
   }
 
@@ -129,6 +209,7 @@ class _CurrencyScreenState extends ConsumerState<CurrencyScreen> {
       _fromAmount = newAmount;
       _swapRotation += 180;
     });
+    _loadHistory();
     showAppToast(context, 'Swapped $_to ↔ $_from', description: 'Live rate applied');
   }
 
@@ -146,14 +227,24 @@ class _CurrencyScreenState extends ConsumerState<CurrencyScreen> {
     });
   }
 
-  void _loadPair(String from, String to) =>
-      setState(() { _from = from; _to = to; });
+  void _loadPair(String from, String to) {
+    setState(() { _from = from; _to = to; });
+    _loadHistory();
+  }
 
   String _formatRate(double n) {
     if (!n.isFinite || n == 0) return '—';
     if (n >= 100) return n.toStringAsFixed(2);
     if (n >= 1) return n.toStringAsFixed(4);
     return n.toStringAsFixed(6);
+  }
+
+  String _timeAgo(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inSeconds < 60) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
   }
 
   List<_RatePoint> _history() {
@@ -192,7 +283,8 @@ class _CurrencyScreenState extends ConsumerState<CurrencyScreen> {
   Widget build(BuildContext context) {
     final t = ref.watch(tProvider);
     final l = context.lumina;
-    final history = _history();
+    final history = _historyPoints ?? _history();
+    final historyIsLive = _historyPoints != null;
 
     return Scaffold(
       body: SafeArea(
@@ -224,7 +316,11 @@ class _CurrencyScreenState extends ConsumerState<CurrencyScreen> {
                                 : Container(
                                     width: 6, height: 6,
                                     decoration: BoxDecoration(
-                                      color: _ratesFetchedAt != null ? AppColors.success : AppColors.warning,
+                                      color: switch (_ratesSource) {
+                                        _RatesSource.live => AppColors.success,
+                                        _RatesSource.cached => AppColors.warning,
+                                        _RatesSource.offline => AppColors.error,
+                                      },
                                       shape: BoxShape.circle,
                                     ),
                                   ),
@@ -232,9 +328,14 @@ class _CurrencyScreenState extends ConsumerState<CurrencyScreen> {
                             Text(
                               _ratesLoading
                                   ? 'Updating rates…'
-                                  : _ratesFetchedAt != null
-                                      ? t.currency.liveRates
-                                      : 'Offline rates',
+                                  : switch (_ratesSource) {
+                                      _RatesSource.live =>
+                                        '${t.currency.liveRates} · updated ${_timeAgo(_ratesFetchedAt!)}',
+                                      _RatesSource.cached =>
+                                        'Cached rates · updated ${_timeAgo(_ratesFetchedAt!)}',
+                                      _RatesSource.offline =>
+                                        'Offline — static rates',
+                                    },
                             ),
                           ],
                         ),
@@ -246,7 +347,7 @@ class _CurrencyScreenState extends ConsumerState<CurrencyScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${t.currency.realTimeRates} · ${t.currency.cachedDemo}',
+                        t.currency.realTimeRates,
                         style: AppTypography.body(context, size: 12)
                             .copyWith(color: l.mutedForeground),
                       ),
@@ -254,14 +355,27 @@ class _CurrencyScreenState extends ConsumerState<CurrencyScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Container(
-                  width: 56, height: 56,
-                  decoration: BoxDecoration(
+                Material(
+                  color: AppColors.iris.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(16),
+                  child: InkWell(
                     borderRadius: BorderRadius.circular(16),
-                    color: AppColors.iris.withValues(alpha: 0.15),
+                    onTap: _ratesLoading ? null : _loadLiveRates,
+                    child: Container(
+                      width: 56, height: 56,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(
+                        Icons.refresh,
+                        size: 28,
+                        color: _ratesLoading
+                            ? AppColors.iris.withValues(alpha: 0.4)
+                            : AppColors.iris,
+                      ),
+                    ),
                   ),
-                  alignment: Alignment.center,
-                  child: const Icon(Icons.refresh, size: 28, color: AppColors.iris),
                 ),
               ],
             ),
@@ -283,7 +397,7 @@ class _CurrencyScreenState extends ConsumerState<CurrencyScreen> {
                       child: _CurrencyPanel(
                         label: t.currency.from,
                         currency: _from,
-                        onCurrencyChange: (c) => setState(() => _from = c),
+                        onCurrencyChange: (c) { setState(() => _from = c); _loadHistory(); },
                         amount: _fromAmount,
                         onAmountChange: (v) => setState(() => _fromAmount = v),
                         editable: true,
@@ -327,7 +441,7 @@ class _CurrencyScreenState extends ConsumerState<CurrencyScreen> {
                       child: _CurrencyPanel(
                         label: t.currency.to,
                         currency: _to,
-                        onCurrencyChange: (c) => setState(() => _to = c),
+                        onCurrencyChange: (c) { setState(() => _to = c); _loadHistory(); },
                         amount: _toValue.toStringAsFixed(2),
                         onAmountChange: (_) {},
                         editable: false,
@@ -481,12 +595,24 @@ class _CurrencyScreenState extends ConsumerState<CurrencyScreen> {
                         action: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.trending_up, size: 14, color: AppColors.iris),
+                            if (_historyLoading)
+                              const SizedBox(
+                                width: 12, height: 12,
+                                child: CircularProgressIndicator(strokeWidth: 1.5, color: AppColors.iris),
+                              )
+                            else
+                              Icon(
+                                historyIsLive ? Icons.trending_up : Icons.show_chart,
+                                size: 14,
+                                color: historyIsLive ? AppColors.iris : AppColors.warning,
+                              ),
                             const SizedBox(width: 4),
                             Text(
-                              'Live',
+                              _historyLoading
+                                  ? 'Loading…'
+                                  : historyIsLive ? 'ECB data' : 'Estimated',
                               style: AppTypography.label(context, size: 11, weight: FontWeight.w600)
-                                  .copyWith(color: AppColors.iris),
+                                  .copyWith(color: historyIsLive ? AppColors.iris : AppColors.warning),
                             ),
                           ],
                         ),

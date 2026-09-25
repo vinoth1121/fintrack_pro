@@ -32,19 +32,37 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     super.dispose();
   }
 
-  void _next() {
+  Future<void> _next() async {
     if (_step < _slideCount - 1) {
-      _pageController.nextPage(
-        duration: const Duration(milliseconds: 350),
-        curve: Curves.easeOutCubic,
-      );
+      // Advance via the PageController; guard against rapid double-taps so we
+      // never queue multiple page jumps and miss the final slide.
+      if (_isAnimating) return;
+      _isAnimating = true;
+      try {
+        await _pageController.nextPage(
+          duration: const Duration(milliseconds: 360),
+          curve: Curves.easeOutCubic,
+        );
+      } finally {
+        _isAnimating = false;
+      }
     } else {
       _finish();
     }
   }
 
+  bool _isAnimating = false;
+
+  /// Finish onboarding.
+  ///
+  /// IMPORTANT: the router's redirect does NOT bounce off `/onboarding` for
+  /// unauthenticated users (the route is allowed for them), so flipping
+  /// `onboardingDone` alone leaves the user stuck here with no visible
+  /// response — exactly the "Get started does nothing" bug. Navigate
+  /// explicitly, the same way `_skipToLogin` does.
   void _finish() {
     ref.read(fintrackProvider.notifier).setOnboardingDone(true);
+    context.go('/login');
   }
 
   void _skipToLogin() {

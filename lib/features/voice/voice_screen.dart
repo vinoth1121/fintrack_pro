@@ -9,6 +9,7 @@ import '../../core/utils/toast.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/ai_repository.dart';
+import '../../core/services/local_intelligence.dart';
 import '../../l10n/app_localizations.dart';
 import '../../providers/fintrack_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
@@ -35,6 +36,11 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _speechAvailable = false;
   bool _listening = false;
+
+  /// Editable transcript — prefilled from speech, fully usable standalone so
+  /// the feature works even where speech recognition is unavailable (emulators,
+  /// denied mic permission, no network speech service).
+  final TextEditingController _transcriptInput = TextEditingController();
 
   DateTime _timerStarted = DateTime.now();
 
@@ -74,11 +80,12 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
         onResult: (result) {
           setState(() {
             _transcript = result.recognizedWords;
+            _transcriptInput.text = _transcript;
           });
         },
         listenOptions: stt.SpeechListenOptions(
-          listenFor: Duration(seconds: 120),
-          pauseFor: Duration(seconds: 10),
+          listenFor: const Duration(seconds: 120),
+          pauseFor: const Duration(seconds: 10),
           partialResults: true,
         ),
       );
@@ -117,13 +124,22 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
       await _speech.cancel();
     } catch (_) {}
     if (!mounted) return;
+    _transcriptInput.text = _transcript;
     setState(() => _phase = _VoicePhase.confirm);
   }
 
   void _onSpeechError(String msg) {
     if (!mounted) return;
+    _listening = false;
+    try {
+      _speech.cancel();
+    } catch (_) {}
     setState(() {
-      _error = 'Speech recognition error: $msg';
+      _error =
+          'Speech recognition is unavailable here ($msg). Type the transaction below instead.';
+      // Recover gracefully: move to the confirm/type step instead of leaving
+      // the user stuck on a spinning "Listening…" state.
+      _phase = _VoicePhase.confirm;
     });
   }
 
@@ -131,18 +147,20 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
 
   Future<void> _processAudio() async {
     final t = ref.read(tProvider);
-    final today = formatDateInput(DateTime.now());
-    // speech_to_text provides on-device transcript; send it to backend for parsing.
-    final result = await AiRepository.transcribeAndParse(_transcript, today: today);
+    setState(() => _phase = _VoicePhase.processing);
+    // Parse fully on-device — no network, no AI key required. A short delay
+    // keeps the "Understanding…" transition perceptible instead of flickering.
+    final parsed = LocalIntelligence.parseVoiceText(_transcript);
+    await Future.delayed(const Duration(milliseconds: 350));
     if (!mounted) return;
-    final transcript = _transcript.isNotEmpty ? _transcript : result.transcript;
     setState(() {
-      _transcript = transcript;
-      _parsed = result.ok ? result.transaction : null;
-      _warning = result.warning;
+      _parsed = parsed;
+      _warning = parsed.amount == null
+          ? 'No amount detected — enter it manually below.'
+          : null;
       _phase = _VoicePhase.review;
     });
-    if (result.ok && result.transaction != null) {
+    if (parsed.amount != null) {
       showAppToast(context, t.messages.txParsed, kind: ToastKind.success);
     }
   }
@@ -151,11 +169,27 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
     setState(() {
       _phase = _VoicePhase.idle;
       _transcript = '';
+      _transcriptInput.clear();
       _parsed = null;
       _warning = null;
       _error = null;
       _seconds = 0;
     });
+  }
+
+  /// Entry point for fully manual entry — no mic needed at all.
+  void _typeInstead() {
+    setState(() {
+      _error = null;
+      _transcript = '';
+      _parsed = null;
+      _phase = _VoicePhase.confirm;
+    });
+  }
+
+  void _confirmTranscript() {
+    _transcript = _transcriptInput.text.trim();
+    _processAudio();
   }
 
   // ---------- Build ----------
@@ -165,6 +199,7 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
     try {
       _speech.cancel();
     } catch (_) {}
+    _transcriptInput.dispose();
     super.dispose();
   }
 
@@ -204,7 +239,11 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
   Widget _buildPhase(AppT t) {
     switch (_phase) {
       case _VoicePhase.idle:
-        return _IdlePhase(key: const ValueKey('idle'), onStart: _startRecording);
+        return _IdlePhase(
+          key: const ValueKey('idle'),
+          onStart: _startRecording,
+          onTypeInstead: _typeInstead,
+        );
       case _VoicePhase.recording:
         return _RecordingPhase(
           key: const ValueKey('recording'),
@@ -215,8 +254,8 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
       case _VoicePhase.confirm:
         return _ConfirmPhase(
           key: const ValueKey('confirm'),
-          transcript: _transcript,
-          onConfirm: _processAudio,
+          controller: _transcriptInput,
+          onConfirm: _confirmTranscript,
           onReRecord: _reset,
         );
       case _VoicePhase.processing:
@@ -254,7 +293,7 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
                     style: AppTypography.display(context, size: 22),),
                 const SizedBox(height: 4),
                 Text(
-                  'Just speak naturally — "Spent 540 on dinner at Swiggy yesterday" — and AI logs it instantly.',
+                  'Just speak or type naturally — "Spent 540 on dinner at Swiggy yesterday" — and it\'s logged instantly, right on this device.',
                   style: AppTypography.body(context, size: 12).copyWith(color: l.mutedForeground),
                 ),
               ],
@@ -282,7 +321,8 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
 
 class _IdlePhase extends StatelessWidget {
   final VoidCallback onStart;
-  const _IdlePhase({super.key, required this.onStart});
+  final VoidCallback onTypeInstead;
+  const _IdlePhase({super.key, required this.onStart, required this.onTypeInstead});
 
   @override
   Widget build(BuildContext context) {
@@ -373,6 +413,12 @@ class _IdlePhase extends StatelessWidget {
                   .toList(),
             ),
           ),
+          const SizedBox(height: 20),
+          GhostButton(
+            icon: const Icon(Icons.keyboard_outlined, size: 16),
+            onPressed: onTypeInstead,
+            child: const Text('Type it instead'),
+          ),
         ],
       ),
     ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.05, end: 0, duration: 400.ms);
@@ -460,10 +506,10 @@ class _RecordingPhase extends StatelessWidget {
 }
 
 class _ConfirmPhase extends StatelessWidget {
-  final String transcript;
+  final TextEditingController controller;
   final VoidCallback onConfirm;
   final VoidCallback onReRecord;
-  const _ConfirmPhase({super.key, required this.transcript, required this.onConfirm, required this.onReRecord});
+  const _ConfirmPhase({super.key, required this.controller, required this.onConfirm, required this.onReRecord});
 
   @override
   Widget build(BuildContext context) {
@@ -477,19 +523,34 @@ class _ConfirmPhase extends StatelessWidget {
           const Icon(Icons.check_circle_outline, size: 56, color: AppColors.iris),
           const SizedBox(height: 16),
           Text(t.voice.reviewConfirm, style: AppTypography.heading(context, size: 16)),
+          const SizedBox(height: 6),
+          Text(
+            'Edit or type what you spent — it will be parsed on this device.',
+            textAlign: TextAlign.center,
+            style: AppTypography.body(context, size: 12).copyWith(color: l.mutedForeground),
+          ),
           const SizedBox(height: 12),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 4),
             decoration: BoxDecoration(
               color: l.surface2.withValues(alpha: 0.4),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: l.border),
             ),
-            child: Text(
-              transcript.isEmpty ? 'No speech captured' : transcript,
+            child: TextField(
+              controller: controller,
+              maxLines: 3,
+              minLines: 1,
               textAlign: TextAlign.center,
               style: AppTypography.body(context, size: 13).copyWith(color: l.foreground),
+              decoration: InputDecoration(
+                border: InputBorder.none,
+                hintText: 'e.g. Spent 540 on dinner at Swiggy',
+                hintStyle: AppTypography.body(context, size: 13)
+                    .copyWith(color: l.mutedForeground),
+                contentPadding: const EdgeInsets.all(14),
+              ),
             ),
           ),
           const SizedBox(height: 24),
@@ -739,7 +800,7 @@ class _ReviewPhaseState extends ConsumerState<_ReviewPhase> {
           const SizedBox(height: 8),
           _Step(n: 1, text: t.voice.recordedOnDevice),
           _Step(n: 2, text: t.voice.transcribedByAsr),
-          _Step(n: 3, text: t.voice.parsedByAi),
+          const _Step(n: 3, text: 'Parsed on this device — no internet or AI account needed'),
         ],
       ),
     );

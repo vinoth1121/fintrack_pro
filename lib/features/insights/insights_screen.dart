@@ -9,6 +9,7 @@ import '../../core/utils/toast.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/ai_repository.dart';
+import '../../core/services/local_intelligence.dart';
 import '../../l10n/app_localizations.dart';
 import '../../providers/fintrack_provider.dart';
 
@@ -37,34 +38,15 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
       _loading = true;
       _error = null;
     });
-    final s = ref.read(fintrackProvider);
-    final currency = s.profile.baseCurrency;
-    final nameMap = <String, String>{for (final c in s.categories) c.id: c.name};
-    try {
-      final payload = await AiRepository.insights(
-        transactions: s.transactions,
-        budgets: s.budgets,
-        goals: s.goals,
-        currency: currency,
-        categoryNameMap: nameMap,
-      );
-      if (payload == null) {
-        setState(() {
-          _error = ref.read(tProvider).messages.aiRequestFailed;
-          _loading = false;
-        });
-        return;
-      }
-      setState(() {
-        _data = payload;
-        _loading = false;
-      });
-    } catch (_) {
-      setState(() {
-        _error = ref.read(tProvider).messages.networkError;
-        _loading = false;
-      });
-    }
+    // Insights are computed deterministically from local data — no network,
+    // no AI key, instant and identical offline/online.
+    final payload = LocalIntelligence.buildInsights(ref.read(fintrackProvider));
+    await Future.delayed(const Duration(milliseconds: 400)); // keep shimmer perceptible
+    if (!mounted) return;
+    setState(() {
+      _data = payload;
+      _loading = false;
+    });
   }
 
   @override

@@ -8,7 +8,7 @@ import '../../core/utils/formatters.dart';
 import '../../core/utils/toast.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/models.dart';
-import '../../data/repositories/ai_repository.dart';
+import '../../core/services/local_intelligence.dart';
 import '../../l10n/app_localizations.dart';
 import '../../providers/fintrack_provider.dart';
 
@@ -64,80 +64,28 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
     );
   }
 
-  String _buildContext() {
-    final state = ref.read(fintrackProvider);
-    final d = ref.read(derivedProvider);
-    final cur = state.profile.baseCurrency;
-    final topCats = d.categoryBreakdown.take(5).map((c) {
-      final amt = formatMoney(c.amount, cur);
-      return '  • ${c.name}: $amt (${c.pct}%)';
-    }).join('\n');
-    final budgets = d.budgetUsage.map((b) {
-      final spent = formatMoney(b.spent, cur);
-      final limit = formatMoney(b.limit, cur);
-      return '  • ${b.categoryName}: spent $spent / $limit (${b.pct}%${b.over ? ", OVER" : ""})';
-    }).join('\n');
-    final goalLines = state.goals.map((g) {
-      final saved = formatMoney(g.saved, cur);
-      final target = formatMoney(g.target, cur);
-      final pct = g.target > 0 ? ((g.saved / g.target) * 100).round() : 0;
-      return '  • ${g.name}: $saved / $target ($pct%)';
-    }).join('\n');
-    var subTotal = 0.0;
-    for (final s in state.subscriptions.where((s) => s.active)) {
-      if (s.cycle == 'monthly') {
-        subTotal += s.amount;
-      } else if (s.cycle == 'yearly') {
-        subTotal += s.amount / 12;
-      } else {
-        subTotal += s.amount * 4.33;
-      }
-    }
-    final trend = d.trend.map((t) {
-      final inc = formatMoney(t.income, cur, compact: true);
-      final exp = formatMoney(t.expense, cur, compact: true);
-      return '${t.month}: in $inc/out $exp';
-    }).join(', ');
-
-    return [
-      'Currency: $cur (${state.profile.name})',
-      'This month: income ${formatMoney(d.monthIncome, cur)}, expenses ${formatMoney(d.monthExpenses, cur)}, savings rate ${(d.savingsRate * 100).round()}%.',
-      'Net worth (account balances): ${formatMoney(d.netBalance, cur)}.',
-      'Expense vs last month: ${d.expenseDelta >= 0 ? "+" : ""}${d.expenseDelta.round()}%.',
-      'Top spending categories this month:',
-      topCats.isEmpty ? '  • (none)' : topCats,
-      'Budgets:',
-      budgets.isEmpty ? '  • (none)' : budgets,
-      'Savings goals:',
-      goalLines.isEmpty ? '  • (none)' : goalLines,
-      'Active subscriptions monthly cost: ${formatMoney(subTotal, cur)} (${state.subscriptions.where((s) => s.active).length} active).',
-      '6-month trend: $trend',
-    ].join('\n');
-  }
-
   Future<void> _send(String text) async {
-    final t = ref.read(tProvider);
     final content = text.trim();
     if (content.isEmpty || _loading) return;
     final state = ref.read(fintrackProvider);
-    final history = [...state.chat, ChatMessage(
+    ref.read(fintrackProvider.notifier).addChatMessage(ChatMessage(
       id: uid('msg'),
       role: 'user',
       content: content,
       createdAt: DateTime.now(),
-    ),];
-    ref.read(fintrackProvider.notifier).addChatMessage(history.last);
+    ),);
     _input.clear();
     setState(() => _loading = true);
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 
-    String reply;
-    try {
-      reply = await AiRepository.chat(history: history, context: _buildContext());
-    } catch (_) {
-      reply = "I couldn't reach the AI service. Please check your connection and try again.";
-      if (mounted) showAppToast(context, t.messages.aiRequestFailed, kind: ToastKind.error);
-    }
+    // Lumina answers from local data only — deterministic, offline, no AI key.
+    final reply = LocalIntelligence.assistantReply(
+      content,
+      state,
+      ref.read(derivedProvider),
+    );
+    // Brief delay keeps the typing indicator perceptible.
+    await Future.delayed(const Duration(milliseconds: 450));
     if (!mounted) return;
     ref.read(fintrackProvider.notifier).addChatMessage(ChatMessage(
       id: uid('msg'),

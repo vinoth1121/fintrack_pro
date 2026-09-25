@@ -58,6 +58,9 @@ backend/.env
 backend/.env.*
 !backend/.env.example
 
+# Stray root-level npm lockfile (the Node backend has its own in backend/)
+/package-lock.json
+
 # Logs
 *.log
 backend/*.log
@@ -73,6 +76,16 @@ yarn-error.log*
 .cache/
 tmp/
 backend/tmp_*.js
+.maestro/
+
+# Personal documents & reports (mini-project report, temp Word/ZIP extracts) ⚠️ NEVER COMMIT
+.docx_tmp/
+.docx_tmp.zip
+.report_tmp.zip
+*.report.zip
+
+# Local UI-automation config (contains embedded test credentials) ⚠️ NEVER COMMIT
+fintrack_pro_full_automation.yaml
 
 # Local debug / ad-hoc test scripts (contain hardcoded tokens & test credentials)
 backend/debug_post.js

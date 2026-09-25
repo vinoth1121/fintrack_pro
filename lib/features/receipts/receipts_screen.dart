@@ -13,6 +13,7 @@ import '../../core/utils/toast.dart';
 import '../../core/widgets/widgets.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/ai_repository.dart';
+import '../../core/services/local_intelligence.dart';
 import '../../l10n/app_localizations.dart';
 import '../../providers/fintrack_provider.dart';
 
@@ -32,6 +33,15 @@ class _ReceiptsScreenState extends ConsumerState<ReceiptsScreen> {
   ReceiptData? _receipt;
   String? _error;
   final ImagePicker _picker = ImagePicker();
+
+  /// Optional pasted receipt text — parsed fully on-device.
+  final TextEditingController _textInput = TextEditingController();
+
+  @override
+  void dispose() {
+    _textInput.dispose();
+    super.dispose();
+  }
 
   // ---------- File handling ----------
 
@@ -78,49 +88,63 @@ class _ReceiptsScreenState extends ConsumerState<ReceiptsScreen> {
     });
   }
 
-  Future<void> _loadSample() async {
-    final t = ref.read(tProvider);
-    try {
-      final bundle = DefaultAssetBundle.of(context);
-      final bytes = await bundle.load('assets/images/sample-receipt.jpg');
-      final b64 = base64Encode(bytes.buffer.asUint8List());
-      final dataUrl = 'data:image/jpeg;base64,$b64';
-      if (!mounted) return;
-      setState(() {
-        _imageData = dataUrl;
-        _receipt = null;
-        _error = null;
-        _phase = _ReceiptPhase.preview;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      showAppToast(context, t.messages.sampleLoadFailed, kind: ToastKind.error);
-    }
+  /// Start without an image: straight to the review form for manual entry.
+  void _enterManually() {
+    setState(() {
+      _imageData = null;
+      _receipt = null;
+      _error = null;
+      _phase = _ReceiptPhase.preview;
+    });
   }
 
-  // ---------- Scan ----------
+  // ---------- Scan (fully on-device) ----------
+
+  ReceiptData _blankReceipt() {
+    return ReceiptData(
+      merchant: '',
+      total: null,
+      subtotal: null,
+      tax: null,
+      date: formatDateInput(DateTime.now()),
+      currency: ref.read(fintrackProvider).profile.baseCurrency,
+      category: 'Other',
+      items: const [],
+      rawText: '',
+    );
+  }
 
   Future<void> _scan() async {
-    final t = ref.read(tProvider);
-    if (_imageData == null) return;
     setState(() {
       _phase = _ReceiptPhase.scanning;
       _error = null;
     });
-    final result = await AiRepository.scanReceipt(_imageData!);
+
+    // Local-only parsing: pasted receipt text is parsed deterministically
+    // on-device; an image with no readable text simply opens the review form
+    // for the user to confirm values manually. No backend, no AI key.
+    final pasted = _textInput.text.trim();
+    final receipt = pasted.isNotEmpty
+        ? LocalIntelligence.parseReceiptText(
+            pasted,
+            defaultCurrency: ref.read(fintrackProvider).profile.baseCurrency,
+          )
+        : _blankReceipt();
+
+    // Brief pause so the scanning animation reads as work, not a flicker.
+    await Future.delayed(const Duration(milliseconds: 500));
     if (!mounted) return;
-    if (result == null) {
-      setState(() {
-        _error = t.messages.aiRequestFailed;
-        _phase = _ReceiptPhase.preview;
-      });
-      return;
-    }
     setState(() {
-      _receipt = result;
+      _receipt = receipt;
       _phase = _ReceiptPhase.review;
     });
-    showAppToast(context, t.messages.receiptScanned, kind: ToastKind.success);
+    showAppToast(
+      context,
+      pasted.isNotEmpty
+          ? ref.read(tProvider).messages.receiptScanned
+          : 'Review the receipt details below',
+      kind: ToastKind.success,
+    );
   }
 
   void _reset() {
@@ -129,6 +153,7 @@ class _ReceiptsScreenState extends ConsumerState<ReceiptsScreen> {
       _imageData = null;
       _receipt = null;
       _error = null;
+      _textInput.clear();
     });
   }
 
@@ -162,13 +187,14 @@ class _ReceiptsScreenState extends ConsumerState<ReceiptsScreen> {
           key: const ValueKey('idle'),
           onUpload: _pickFromGallery,
           onCamera: _pickFromCamera,
-          onSample: _loadSample,
+          onManual: _enterManually,
         );
       case _ReceiptPhase.preview:
         return _PreviewPhase(
           key: const ValueKey('preview'),
           imageData: _imageData,
           error: _error,
+          textController: _textInput,
           onScan: _scan,
           onReset: _reset,
         );
@@ -236,8 +262,8 @@ class _ReceiptsScreenState extends ConsumerState<ReceiptsScreen> {
 // =============================================================
 
 class _IdlePhase extends StatelessWidget {
-  final VoidCallback onUpload, onCamera, onSample;
-  const _IdlePhase({super.key, required this.onUpload, required this.onCamera, required this.onSample});
+  final VoidCallback onUpload, onCamera, onManual;
+  const _IdlePhase({super.key, required this.onUpload, required this.onCamera, required this.onManual});
 
   @override
   Widget build(BuildContext context) {
@@ -262,7 +288,7 @@ class _IdlePhase extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              'Supported: JPG, PNG, WebP. Max 8MB. Your image is processed by the vision model and never stored.',
+              'Snap or upload a receipt for reference, or paste its text — parsing runs on this device, so it works offline.',
               textAlign: TextAlign.center,
               style: AppTypography.body(context, size: 12).copyWith(color: l.mutedForeground),
             ),
@@ -283,15 +309,10 @@ class _IdlePhase extends StatelessWidget {
                 onPressed: onCamera,
                 child: Text(t.receipts.takePhoto),
               ),
-              TextButton.icon(
-                onPressed: onSample,
-                icon: const Icon(Icons.auto_awesome, size: 16, color: AppColors.iris),
-                label: Text(t.receipts.trySample,
-                    style: const TextStyle(color: AppColors.iris, fontWeight: FontWeight.w500, fontSize: 14),),
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
+              GhostButton(
+                icon: const Icon(Icons.edit_note, size: 16),
+                onPressed: onManual,
+                child: const Text('Enter manually'),
               ),
             ],
           ),
@@ -304,8 +325,9 @@ class _IdlePhase extends StatelessWidget {
 class _PreviewPhase extends StatelessWidget {
   final String? imageData;
   final String? error;
+  final TextEditingController textController;
   final VoidCallback onScan, onReset;
-  const _PreviewPhase({super.key, this.imageData, this.error, required this.onScan, required this.onReset});
+  const _PreviewPhase({super.key, this.imageData, this.error, required this.textController, required this.onScan, required this.onReset});
 
   @override
   Widget build(BuildContext context) {
@@ -330,7 +352,17 @@ class _PreviewPhase extends StatelessWidget {
               constraints: const BoxConstraints(maxHeight: 420),
               width: double.infinity,
               child: imageData == null
-                  ? const SizedBox.shrink()
+                  ? Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Center(
+                        child: Text(
+                          'No image — enter the details on the right',
+                          textAlign: TextAlign.center,
+                          style: AppTypography.body(context, size: 12)
+                              .copyWith(color: l.mutedForeground),
+                        ),
+                      ),
+                    )
                   : Image.memory(_decodeDataUrl(imageData!), fit: BoxFit.contain),
             ),
           ),
@@ -343,9 +375,9 @@ class _PreviewPhase extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SectionHeader(
-            title: t.receipts.readyToScan,
-            subtitle: 'AI will extract all details',
+          const SectionHeader(
+            title: 'Receipt details',
+            subtitle: 'Parsed on-device — edit anything before saving',
           ),
           if (error != null) ...[
             const SizedBox(height: 12),
@@ -364,7 +396,29 @@ class _PreviewPhase extends StatelessWidget {
           const _FeatureRow(icon: Icons.document_scanner_outlined, text: 'Total, subtotal & tax'),
           const _FeatureRow(icon: Icons.auto_awesome, text: 'Auto category detection'),
           const _FeatureRow(icon: Icons.add, text: 'Line items as individual entries'),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
+          TextField(
+            controller: textController,
+            maxLines: 5,
+            minLines: 3,
+            style: AppTypography.body(context, size: 13),
+            decoration: InputDecoration(
+              hintText: 'Optional: paste the receipt text here for automatic parsing…',
+              hintStyle: AppTypography.body(context, size: 12)
+                  .copyWith(color: l.mutedForeground),
+              filled: true,
+              fillColor: l.surface3.withValues(alpha: 0.4),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: l.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: l.border),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           Wrap(spacing: 8, children: [
             GradientButton(icon: const Icon(Icons.auto_awesome), onPressed: onScan, child: Text(t.receipts.scanReceipt)),
             GhostButton(icon: const Icon(Icons.refresh), onPressed: onReset, child: Text(t.receipts.chooseAnother)),

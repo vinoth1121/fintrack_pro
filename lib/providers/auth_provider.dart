@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/repositories/auth_repository.dart';
+import 'fintrack_provider.dart';
 
 /// Auth state.
 class AuthState {
@@ -22,14 +23,28 @@ enum AuthStatus { unknown, unauthenticated, authenticated }
 
 /// Auth notifier — manages login/logout/session.
 class AuthNotifier extends StateNotifier<AuthState> {
-  AuthNotifier() : super(const AuthState()) {
+  final Ref _ref;
+  AuthNotifier(this._ref) : super(const AuthState()) {
     _restoreSession();
+  }
+
+  /// Push the real logged-in user's identity into the app profile so the
+  /// profile screen, drawer, reports, etc. never show demo/seed data.
+  void _applyUserToProfile(AuthUser user) {
+    _ref.read(fintrackProvider.notifier).applyAuthUser(
+          name: user.name,
+          email: user.email,
+          avatarColor: user.avatarColor,
+          baseCurrency: user.baseCurrency,
+          monthlyIncomeGoal: user.monthlyIncomeGoal,
+        );
   }
 
   Future<void> _restoreSession() async {
     final user = await AuthRepository.getMe();
     if (user != null) {
       state = AuthState(status: AuthStatus.authenticated, user: user);
+      _applyUserToProfile(user);
     } else {
       state = const AuthState(status: AuthStatus.unauthenticated);
     }
@@ -40,6 +55,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       final result = await AuthRepository.login(email: email, password: password);
       state = AuthState(status: AuthStatus.authenticated, user: result.user);
+      _applyUserToProfile(result.user);
       return true;
     } catch (e) {
       state = state.copyWith(loading: false, error: e.toString());
@@ -49,6 +65,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   void setAuthResult(AuthResult result) {
     state = AuthState(status: AuthStatus.authenticated, user: result.user);
+    _applyUserToProfile(result.user);
   }
 
   void setError(String? error) {
@@ -60,6 +77,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       final result = await AuthRepository.register(name: name, email: email, password: password);
       state = AuthState(status: AuthStatus.authenticated, user: result.user);
+      _applyUserToProfile(result.user);
       return result;
     } catch (e) {
       state = state.copyWith(loading: false, error: e.toString());
@@ -78,7 +96,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 }
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>(
-  (ref) => AuthNotifier(),
+  (ref) => AuthNotifier(ref),
 );
 
 /// Convenience provider for the current user.
